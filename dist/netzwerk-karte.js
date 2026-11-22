@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.2.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.2.0";
+/*! netzwerk-karte 0.3.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.3.0";
 const W = 1500;
 const H = 880;
 const COLORS = {
@@ -101,7 +101,19 @@ const STYLE = `
   .legend { display: flex; justify-content: flex-end; gap: 16px; flex-wrap: wrap; font-size: 11px; color: #8ea3d4; margin: 10px 4px 0; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend b { display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--c); }
-  .scroll { overflow-x: auto; }
+  .wrap { position: relative; }
+  .scroll { overflow-x: auto; cursor: grab; touch-action: pan-y; user-select: none; }
+  .scroll.drag { cursor: grabbing; }
+  .zoom { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; z-index: 2; }
+  .zoom button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(90,140,255,.35);
+    background: rgba(20,34,72,.75); color: #cfe0ff; font-size: 16px; line-height: 1; cursor: pointer; }
+  .zoom button:hover { border-color: ${COLORS.wlan}; }
+  .menu { position: absolute; z-index: 5; min-width: 220px; padding: 6px; border-radius: 12px; background: #0c1733;
+    border: 1px solid rgba(90,140,255,.45); box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .menu .mh { padding: 6px 10px 8px; font-size: 11px; letter-spacing: .08em; color: #8ea3d4; }
+  .menu a, .menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 10px;
+    border-radius: 8px; color: #e8efff; text-decoration: none; font: inherit; font-size: 13px; background: none; border: 0; cursor: pointer; }
+  .menu a:hover, .menu button:hover { background: rgba(47,212,255,.12); }
   svg { display: block; width: 100%; min-width: 680px; height: auto; }
   .node { cursor: pointer; outline: none; }
   .node circle.ring { filter: drop-shadow(0 0 6px var(--c)); transition: transform .15s; transform-box: fill-box; transform-origin: center; }
@@ -125,9 +137,67 @@ class NetzwerkKarte extends HTMLElement {
     super();
     this._root = this.attachShadow({ mode: "open" });
     this._key = "";
-    this._root.addEventListener("click", (e) => this._onClick(e));
-    this._root.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") this._onClick(e);
+    this._view = { k: 1, x: 0, y: 0 };
+    this._drag = null;
+    this._suppress = false;
+    const r = this._root;
+    r.addEventListener("click", (e) => this._onClick(e));
+    r.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") this._closeMenu();
+      else if (e.key === "Enter" || e.key === " ") this._onClick(e);
+    });
+    r.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this._config || this._config.zoom === "off") return;
+        const sc = e.target.closest ? e.target.closest(".scroll") : null;
+        if (!sc || (this._config.zoom === "ctrl" && !e.ctrlKey)) return;
+        e.preventDefault();
+        const rect = sc.querySelector("svg").getBoundingClientRect();
+        const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        this._zoomAt(((e.clientX - rect.left) * W) / rect.width, ((e.clientY - rect.top) * H) / rect.height, Math.exp(-dy * 0.0015));
+      },
+      { passive: false }
+    );
+    r.addEventListener("mousedown", (e) => {
+      if (e.button === 1 && e.target.closest && e.target.closest(".scroll")) e.preventDefault();
+    });
+    r.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "mouse" || (e.button !== 0 && e.button !== 1)) return;
+      const t = e.target;
+      const sc = t.closest ? t.closest(".scroll") : null;
+      if (!sc || t.closest(".zoom") || t.closest(".menu")) return;
+      this._drag = { id: e.pointerId, x: e.clientX, y: e.clientY, vx: this._view.x, vy: this._view.y, moved: false, sc };
+      if (sc.setPointerCapture) sc.setPointerCapture(e.pointerId);
+    });
+    r.addEventListener("pointermove", (e) => {
+      const d = this._drag;
+      if (!d || e.pointerId !== d.id) return;
+      const dx = e.clientX - d.x;
+      const dy = e.clientY - d.y;
+      if (!d.moved && Math.hypot(dx, dy) < 4) return;
+      d.moved = true;
+      d.sc.classList.add("drag");
+      const rect = d.sc.querySelector("svg").getBoundingClientRect();
+      this._view.x = d.vx + (dx * W) / rect.width;
+      this._view.y = d.vy + (dy * H) / rect.height;
+      this._applyView();
+    });
+    const end = () => {
+      const d = this._drag;
+      if (!d) return;
+      d.sc.classList.remove("drag");
+      if (d.moved) {
+        this._suppress = true;
+        setTimeout(() => (this._suppress = false), 0);
+      }
+      this._drag = null;
+    };
+    r.addEventListener("pointerup", end);
+    r.addEventListener("pointercancel", end);
+    r.addEventListener("dblclick", (e) => {
+      const t = e.target;
+      if (t.closest && t.closest(".scroll") && !t.closest(".node")) this._zoomBy("reset");
     });
   }
 
@@ -138,6 +208,7 @@ class NetzwerkKarte extends HTMLElement {
       subtitle: "LAN · WLAN · Mesh",
       auto_discover: true,
       show_offline: false,
+      zoom: "wheel",
       include: [],
       exclude: [],
       default_connection: "wlan",
@@ -166,12 +237,86 @@ class NetzwerkKarte extends HTMLElement {
     return { title: "Netzwerk" };
   }
 
+  _moreInfo(entityId) {
+    this.dispatchEvent(new CustomEvent("hass-more-info", { bubbles: true, composed: true, detail: { entityId } }));
+  }
+
   _onClick(e) {
-    const el = e.target && e.target.closest ? e.target.closest("[data-entity]") : null;
-    if (!el || !el.dataset.entity) return;
-    this.dispatchEvent(
-      new CustomEvent("hass-more-info", { bubbles: true, composed: true, detail: { entityId: el.dataset.entity } })
-    );
+    if (this._suppress) {
+      this._suppress = false;
+      return;
+    }
+    const t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    const z = t.closest("[data-zoom]");
+    if (z) return this._zoomBy(z.dataset.zoom);
+    if (t.closest(".menu")) {
+      const d = t.closest("[data-entity]");
+      if (d && d.dataset.entity) this._moreInfo(d.dataset.entity);
+      return this._closeMenu(); // Links öffnen sich über das Anker-Element selbst
+    }
+    const hub = t.closest("[data-hub]");
+    if (hub) return this._hubClick(hub);
+    this._closeMenu();
+    const el = t.closest("[data-entity]");
+    if (el && el.dataset.entity) this._moreInfo(el.dataset.entity);
+  }
+
+  _hubClick(el) {
+    this._closeMenu();
+    const h = this._m && this._m.hubs.find((x) => x.id === el.dataset.hub);
+    if (!h) return;
+    const n = h.links.length + (h.entity ? 1 : 0);
+    if (!n) return;
+    if (n === 1 && h.links.length === 1) {
+      window.open(h.links[0].url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (n === 1) return this._moreInfo(h.entity);
+    const wrap = this._root.querySelector(".wrap");
+    if (!wrap) return;
+    const items =
+      h.links
+        .map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a>`)
+        .join("") + (h.entity ? `<button data-entity="${esc(h.entity)}">Details anzeigen</button>` : "");
+    const menu = document.createElement("div");
+    menu.className = "menu";
+    menu.innerHTML = `<div class="mh">${esc(h.name)}</div>${items}`;
+    wrap.appendChild(menu);
+    const nr = el.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    const left = Math.max(4, Math.min(nr.right - wr.left + 8, wr.width - menu.offsetWidth - 8));
+    const top = Math.max(4, Math.min(nr.top - wr.top, wr.height - menu.offsetHeight - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  _closeMenu() {
+    const m = this._root.querySelector(".menu");
+    if (m) m.remove();
+  }
+
+  _applyView() {
+    const g = this._root.querySelector("#vp");
+    const v = this._view;
+    if (g) g.setAttribute("transform", `translate(${v.x.toFixed(1)} ${v.y.toFixed(1)}) scale(${v.k.toFixed(3)})`);
+  }
+
+  _zoomAt(ux, uy, f) {
+    const v = this._view;
+    const k = clamp(v.k * f, 0.4, 6);
+    const r = k / v.k;
+    v.x = ux - (ux - v.x) * r;
+    v.y = uy - (uy - v.y) * r;
+    v.k = k;
+    this._applyView();
+  }
+
+  _zoomBy(a) {
+    if (a === "reset") {
+      this._view = { k: 1, x: 0, y: 0 };
+      this._applyView();
+    } else this._zoomAt(W / 2, H / 2, a === "in" ? 1.25 : 0.8);
   }
 
   _update() {
@@ -180,6 +325,7 @@ class NetzwerkKarte extends HTMLElement {
     const key = JSON.stringify(model);
     if (key === this._key) return;
     this._key = key;
+    this._m = model;
     this._draw(model);
   }
 
@@ -188,6 +334,15 @@ class NetzwerkKarte extends HTMLElement {
     const st = this._hass.states;
     const lang = this._hass.locale?.language || "de";
 
+    const hubLinks = (h, main) => {
+      const ok = (l) => l && /^https?:\/\//i.test(String(l.url || ""));
+      if (Array.isArray(h.links)) return h.links.filter(ok).map((l) => ({ name: l.name || l.url, url: String(l.url) }));
+      const out = [];
+      if (h.url) out.push({ name: main ? "Weboberfläche" : "Einstellungen", url: String(h.url) });
+      else if (h.ip && !main) out.push({ name: "FRITZ!Box-Einstellungen", url: `http://${h.ip}` });
+      if (h.gateway) out.push({ name: "OPNsense", url: `https://${h.gateway}` });
+      return out.filter(ok);
+    };
     const mkHub = (h, i, main) => {
       const p = PRESETS[i % PRESETS.length];
       const name = h.name || (main ? "Router" : `Hub ${i + 1}`);
@@ -205,6 +360,7 @@ class NetzwerkKarte extends HTMLElement {
         ip: h.ip || "",
         mac: normMac(h.mac),
         subnets: list(h.subnet).map(parseCidr).filter(Boolean),
+        links: hubLinks(h, main),
         main,
       };
     };
@@ -380,9 +536,9 @@ class NetzwerkKarte extends HTMLElement {
         stroke="${online ? color : COLORS.offline}" stroke-width="${online ? width : 1.2}" stroke-linecap="round"
         ${online ? `class="flow" opacity=".85"` : `stroke-dasharray="2 6" opacity=".5"`}/>`;
 
-    const node = (x, y, icon, color, online, entity, r, extra = "") => `
+    const node = (x, y, icon, color, online, entity, r, extra = "", hubId = "") => `
       <g class="node ${online ? "" : "off"} ${extra}" style="--c:${color}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"
-         ${entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
+         ${hubId ? `data-hub="${esc(hubId)}" tabindex="0" role="button"` : entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
         <circle class="ring" r="${r}" fill="#0c1530" stroke="${color}" stroke-width="2"/>
         <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}"><div xmlns="http://www.w3.org/1999/xhtml"><ha-icon icon="${esc(icon)}"></ha-icon></div></foreignObject>
       </g>`;
@@ -405,7 +561,7 @@ class NetzwerkKarte extends HTMLElement {
     });
 
     m.hubs.forEach((h) => {
-      nodes += node(h.px, h.py, h.icon, h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, h.online, h.entity, h.main ? 32 : 26, "hub");
+      nodes += node(h.px, h.py, h.icon, h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, h.online, h.entity, h.main ? 32 : 26, "hub", h.links.length || h.entity ? h.id : "");
       labels += `<text class="hubname" x="${h.px}" y="${h.py + (h.main ? 56 : 50)}" text-anchor="middle" fill="#f4f7ff" font-size="14" font-weight="700">${esc(h.name)}</text>
         <text class="count" x="${h.px}" y="${h.py + (h.main ? 72 : 66)}" text-anchor="middle" fill="#8ea3d4" font-size="11">${esc(h.ssid ? `${h.ssid} · ` : "")}${h.count} Geräte</text>`;
     });
@@ -448,9 +604,11 @@ class NetzwerkKarte extends HTMLElement {
         </header>
         ${tiles ? `<div class="stats">${tiles}</div>` : ""}
         <div class="legend">${legend}</div>
-        <div class="scroll"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Netzwerk-Topologie">
-          ${links}${nodes}${labels}${empty}</svg></div>
+        <div class="wrap"><div class="scroll"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Netzwerk-Topologie">
+          <g id="vp">${links}${nodes}${labels}${empty}</g></svg></div>
+          ${c.zoom === "off" ? "" : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Zurücksetzen">⟲</button></div>`}</div>
       </ha-card>`;
+    this._applyView();
   }
 }
 

@@ -2,11 +2,13 @@ type: custom:netzwerk-karte
 title: Netzwerk
 subtitle: LAN · WLAN · Mesh
 internet_entity: binary_sensor.fritz_box_6490_verbindung   # an deine Entität anpassen
+zoom: wheel                    # wheel = Mausrad, ctrl = Strg + Mausrad, off = aus
 
 # Zentrum: die Firewall
 main:
   name: OPNsense
   icon: mdi:firewall
+  # url: https://192.168.1.1   # Klick auf die Firewall öffnet die Weboberfläche (Adresse anpassen)
 
 # Jede Fritzbox ist per LAN an die Firewall angeschlossen.
 # Clients werden automatisch über ihre IP-Adresse dem passenden Router zugeordnet.
@@ -15,17 +17,22 @@ hubs:
     ssid: WLAN_NBG3
     subnet: 192.168.3.0/24
     ip: 192.168.3.90
-    mac: c8:0e:14:bc:93:c8     # Status der Box wird aus dem passenden device_tracker übernommen
+    mac: "c8:0e:14:bc:93:c8"   # Status der Box wird aus dem passenden device_tracker übernommen
+    gateway: 192.168.3.1       # OPNsense-Adresse in diesem Netz (bitte prüfen)
     link: lan
   - name: FRITZ!Box 6590
     ssid: WLAN_NBG1
     subnet: 192.168.4.0/24
-    ip: 192.168.4.xx           # IP der Box eintragen
+    ip: 192.168.4.126
+    mac: "cc:ce:1e:a3:a8:97"
+    gateway: 192.168.4.1
     link: lan
   - name: FRITZ!Box 7590
     ssid: WLAN_NBG2
     subnet: 192.168.5.0/24
-    ip: 192.168.5.xx           # IP der Box eintragen
+    ip: 192.168.5.90
+    mac: "3c:a6:2f:7f:3f:55"
+    gateway: 192.168.5.1
     link: lan
 
 # Geräte ohne eigenen Tracker oder aus anderen Netzen, z. B. das NAS:

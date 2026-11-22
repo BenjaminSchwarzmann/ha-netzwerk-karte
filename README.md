@@ -35,6 +35,13 @@ Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 1. `dist/netzwerk-karte.js` nach `/config/www/netzwerk-karte.js` kopieren.
 2. *Einstellungen → Dashboards → Ressourcen* → Ressource hinzufügen: URL `/local/netzwerk-karte.js`, Typ *JavaScript-Modul*.
 
+## Bedienung
+
+- **Zoomen:** Mausrad über der Karte. Der Punkt unter dem Mauszeiger bleibt dabei stehen. Auf Wunsch nur mit Strg (`zoom: ctrl`), damit die Seite normal scrollt.
+- **Verschieben:** Mit gedrückter linker oder mittlerer Maustaste ziehen.
+- **Zurücksetzen:** Doppelklick auf den Hintergrund oder die Schaltfläche ⟲. Die Schaltflächen + und − helfen auch auf Touchgeräten.
+- **Router anklicken:** Hat ein Knoten einen Link, öffnet sich die Weboberfläche in einem neuen Fenster. Bei mehreren Zielen erscheint ein kleines Menü. Normale Geräte öffnen den Entitätsdialog.
+
 ## Konfiguration
 
 Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml).
@@ -44,7 +51,8 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `title`, `subtitle` | Netzwerk, LAN · WLAN · Mesh | Kopfzeile |
 | `internet_entity` | – | Entität für den Internet-Status (`on` = online) |
 | `main` | `Router`, x 50, y 34 | Hauptknoten in der Mitte: `name`, `x`, `y`, `icon`, `entity`, `subnet` |
-| `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
+| `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `url`, `gateway`, `links`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
+| `zoom` | `wheel` | Zoom per Mausrad (`wheel`), nur mit gedrückter Strg-Taste (`ctrl`) oder aus (`off`) |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
 | `show_offline` | `false` | Auch Offline-Geräte der FRITZ!Box anzeigen |
 | `include`, `exclude` | – | Listen von regulären Ausdrücken auf Name oder Entity-ID |
@@ -53,6 +61,12 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `default_connection` | `wlan` | Verbindungsart für automatisch gefundene Geräte |
 | `max_name_length` | `20` | Namen werden darauf gekürzt |
 | `stats` | – | Kennzahlen: `entity`, `name`, `icon`, `unit`, `multiply`, `decimals`, `format: text` |
+
+**Links an Routern:**
+- `ip` ergibt automatisch den Link `http://<ip>` (Fritzbox-Einstellungen).
+- `gateway` ergibt zusätzlich `https://<gateway>` (z. B. OPNsense in diesem Netz).
+- `url` ersetzt den Standardlink, am Hauptknoten legt es das Ziel fest.
+- `links` (Liste aus `name` und `url`) ersetzt alles und erlaubt beliebig viele Ziele. Es sind nur `http://`- und `https://`-Adressen erlaubt.
 
 Positionen `x` und `y` sind Prozentwerte der Kartenfläche. Hubs ohne Angabe werden auf Standardplätze links, rechts und unten gesetzt.
 
@@ -64,13 +78,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.2.0"
+git commit -m "Netzwerk-Karte 0.3.0"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.2.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.0`), damit Updates erkannt werden.
 
 ## Lizenz
 
