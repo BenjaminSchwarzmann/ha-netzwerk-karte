@@ -1,57 +1,65 @@
 type: custom:netzwerk-karte
 title: Netzwerk
 subtitle: LAN · WLAN · Mesh
-internet_entity: binary_sensor.fritz_box_7590_verbindung   # an deine Entität anpassen
+internet_entity: binary_sensor.fritz_box_6490_verbindung   # an deine Entität anpassen
 
+# Zentrum: die Firewall
 main:
-  name: FRITZ!Box 7590
-  x: 50          # Position in Prozent
-  y: 40
+  name: OPNsense
+  icon: mdi:firewall
 
+# Jede Fritzbox ist per LAN an die Firewall angeschlossen.
+# Clients werden automatisch über ihre IP-Adresse dem passenden Router zugeordnet.
 hubs:
-  - name: FRITZ!Repeater 600   # Name wie im Attribut connected_to der Geräte
-    parent: main
-    link: mesh
-  - name: FRITZ!Repeater 310
-    link: mesh
-  - name: OPNsense             # Beispiel für ein Gerät, das die FRITZ!Box nicht kennt
-    id: opnsense
+  - name: FRITZ!Box 6490
+    ssid: WLAN_NBG3
+    subnet: 192.168.3.0/24
+    ip: 192.168.3.90
+    mac: c8:0e:14:bc:93:c8     # Status der Box wird aus dem passenden device_tracker übernommen
     link: lan
-    x: 50
-    y: 80
+  - name: FRITZ!Box 6590
+    ssid: WLAN_NBG1
+    subnet: 192.168.4.0/24
+    ip: 192.168.4.xx           # IP der Box eintragen
+    link: lan
+  - name: FRITZ!Box 7590
+    ssid: WLAN_NBG2
+    subnet: 192.168.5.0/24
+    ip: 192.168.5.xx           # IP der Box eintragen
+    link: lan
 
-devices:                       # manuell, für alles ausserhalb der FRITZ!Box
+# Geräte ohne eigenen Tracker oder aus anderen Netzen, z. B. das NAS:
+devices:
   - name: NAS
     entity: binary_sensor.nas_erreichbar   # beliebige Entität, "on"/"home" = online
-    hub: opnsense
+    ip: 192.168.10.10                      # bestimmt den Router, falls ein Subnetz passt
+    hub: main                              # oder direkt festlegen
     connection: lan
     icon: mdi:nas
 
-overrides:                     # Feinschliff für automatisch gefundene Geräte
-  device_tracker.hp_laserjet:
+# Automatisch gefundene Geräte feintunen (Schlüssel: Entity-ID, Name oder MAC):
+overrides:
+  "aa:bb:cc:dd:ee:ff":
+    name: Drucker
     connection: lan
-  device_tracker.iphone_von_max:
-    name: iPhone
   device_tracker.altes_handy:
     hidden: true
 
+# Unbenannte Geräte (Standard-Hostnamen wie PC-1C-90-FF-...) ausblenden:
 exclude:
-  - "unbekannt"
+  - "^PC-[0-9A-F]{2}-"
 
 stats:
-  - entity: sensor.fritz_box_7590_download_durchsatz
+  - entity: sensor.fritz_box_6490_download_durchsatz
     name: Download
     icon: mdi:download
     multiply: 8                # kB/s in kbit/s
     unit: kbit/s
-  - entity: sensor.fritz_box_7590_upload_durchsatz
+  - entity: sensor.fritz_box_6490_upload_durchsatz
     name: Upload
     icon: mdi:upload
     multiply: 8
     unit: kbit/s
-  - entity: sensor.fritz_box_7590_cpu_temperatur
+  - entity: sensor.fritz_box_6490_cpu_temperatur
     name: CPU-Temp
     icon: mdi:thermometer
-  - entity: sensor.fritz_box_7590_gerate_uptime
-    name: Box läuft seit
-    icon: mdi:timer-outline

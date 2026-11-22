@@ -1,7 +1,7 @@
-/*! netzwerk-karte 0.1.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.1.0";
-const W = 1200;
-const H = 760;
+/*! netzwerk-karte 0.2.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.2.0";
+const W = 1500;
+const H = 880;
 const COLORS = {
   wlan: "#2fd4ff",
   lan: "#ffa24a",
@@ -12,7 +12,7 @@ const COLORS = {
 };
 const LABELS = { wlan: "WLAN", lan: "LAN", mesh: "Mesh", internet: "Internet", offline: "Offline" };
 const OFFLINE = ["off", "not_home", "unavailable", "unknown", "disconnected", "false", "none"];
-const PRESETS = [[26, 46], [74, 50], [50, 90], [28, 88], [72, 88], [50, 10]];
+const PRESETS = [[22, 50], [78, 50], [50, 80], [22, 84], [78, 84], [50, 12]];
 const ICONS = [
   [/iphone|pixel|galaxy|handy|phone/i, "mdi:cellphone"],
   [/ipad|tablet/i, "mdi:tablet"],
@@ -22,7 +22,8 @@ const ICONS = [
   [/\bcam\b|kamera|reolink|\bnvr\b|\bring\b/i, "mdi:cctv"],
   [/echo|alexa|homepod|sonos|speaker/i, "mdi:speaker-wireless"],
   [/klima|air ?con/i, "mdi:air-conditioner"],
-  [/repeater|accesspoint|access point/i, "mdi:router-wireless"],
+  [/opnsense|pfsense|firewall/i, "mdi:firewall"],
+  [/fritz.?box|router|repeater|accesspoint|access point/i, "mdi:router-wireless"],
   [/raspberry|raspi|\bpi\b/i, "mdi:raspberry-pi"],
   [/home ?assistant/i, "mdi:home-assistant"],
   [/\besp|shelly|tasmota|sonoff/i, "mdi:chip"],
@@ -48,6 +49,30 @@ const since = (iso) => {
   const d = Math.floor(h / 24);
   return d > 0 ? `${d} T ${h % 24} Std` : `${h} Std ${Math.floor((ms % 3600000) / 60000)} Min`;
 };
+
+const ipToInt = (ip) => {
+  const p = String(ip).trim().split(".");
+  if (p.length !== 4) return null;
+  let n = 0;
+  for (const x of p) {
+    const v = Number(x);
+    if (!(v >= 0 && v <= 255) || x === "") return null;
+    n = n * 256 + v;
+  }
+  return n;
+};
+const parseCidr = (c) => {
+  const [base, bits = "32"] = String(c).trim().split("/");
+  const l = Number(bits);
+  return ipToInt(base) == null || !(l >= 0 && l <= 32) ? null : [ipToInt(base), l];
+};
+const inCidr = (ip, [base, l]) => {
+  const a = ipToInt(ip);
+  if (a == null) return false;
+  const size = 2 ** (32 - l);
+  return Math.floor(a / size) === Math.floor(base / size);
+};
+const normMac = (m) => (m ? String(m).toLowerCase().replace(/-/g, ":") : "");
 
 const STYLE = `
   :host { display: block; }
@@ -122,7 +147,7 @@ class NetzwerkKarte extends HTMLElement {
       overrides: {},
       stats: [],
       ...config,
-      main: { name: "FRITZ!Box", x: 50, y: 40, ...(config.main || {}) },
+      main: { name: "Router", x: 50, y: 34, ...(config.main || {}) },
     };
     this._key = "";
     this._update();
@@ -163,35 +188,65 @@ class NetzwerkKarte extends HTMLElement {
     const st = this._hass.states;
     const lang = this._hass.locale?.language || "de";
 
-    const hubs = [
-      {
-        id: "main", name: c.main.name, match: [], parent: null, link: "lan", x: c.main.x, y: c.main.y,
-        entity: c.main.entity || null, icon: c.main.icon || "mdi:router-wireless", main: true,
-      },
-    ];
-    c.hubs.forEach((h, i) => {
+    const mkHub = (h, i, main) => {
       const p = PRESETS[i % PRESETS.length];
-      hubs.push({
-        id: h.id || slug(h.name), name: h.name,
-        match: list(h.match ?? h.name).map((s) => String(s).toLowerCase()),
-        parent: h.parent || "main", link: h.link || "mesh", x: h.x ?? p[0], y: h.y ?? p[1],
-        entity: h.entity || null, icon: h.icon || "mdi:access-point-network", main: false,
-      });
+      const name = h.name || (main ? "Router" : `Hub ${i + 1}`);
+      return {
+        id: main ? "main" : h.id || slug(name),
+        name,
+        match: main ? [] : list(h.match ?? name).map((x) => String(x).toLowerCase()),
+        parent: main ? null : h.parent || "main",
+        link: main ? "lan" : h.link || "lan",
+        x: main ? h.x : h.x ?? p[0],
+        y: main ? h.y : h.y ?? p[1],
+        entity: h.entity || null,
+        icon: h.icon || (iconFor(name) !== "mdi:devices" ? iconFor(name) : main ? "mdi:router-wireless" : "mdi:router-wireless"),
+        ssid: h.ssid || "",
+        ip: h.ip || "",
+        mac: normMac(h.mac),
+        subnets: list(h.subnet).map(parseCidr).filter(Boolean),
+        main,
+      };
+    };
+    const hubs = [mkHub(c.main, 0, true), ...c.hubs.map((h, i) => mkHub(h, i, false))];
+
+    // Tracker-Index nach MAC (Status der Router selbst, Duplikate)
+    const trackerByMac = {};
+    for (const [eid, s] of Object.entries(st)) {
+      if (!eid.startsWith("device_tracker.")) continue;
+      const mac = normMac(s.attributes?.mac || s.attributes?.mac_address);
+      if (mac) trackerByMac[mac] = trackerByMac[mac] || eid;
+    }
+    hubs.forEach((h) => {
+      if (!h.entity && h.mac && trackerByMac[h.mac]) h.entity = trackerByMac[h.mac];
+      h.online = h.entity ? isOnline(st[h.entity]?.state) : true;
     });
-    hubs.forEach((h) => (h.online = h.entity ? isOnline(st[h.entity]?.state) : true));
 
     const findHub = (key) => {
       if (key == null || key === "") return hubs[0];
       const k = String(key).toLowerCase();
       return (
         hubs.find((h) => h.id === k || h.name.toLowerCase() === k) ||
-        hubs.slice(1).find((h) => h.match.some((m) => k.includes(m))) ||
+        hubs.slice(1).find((h) => h.match.some((x) => k.includes(x))) ||
         hubs[0]
       );
     };
+    // Reihenfolge: erzwungen > IP-Subnetz (längstes Präfix) > connected_to > Hauptknoten
+    const assign = (forced, ip, via) => {
+      if (forced != null && forced !== "") return findHub(forced);
+      if (ip) {
+        let best = null;
+        let bl = -1;
+        for (const h of hubs) for (const cidr of h.subnets) if (cidr[1] > bl && inCidr(ip, cidr)) { best = h; bl = cidr[1]; }
+        if (best) return best;
+      }
+      return findHub(via);
+    };
 
+    const hubIps = new Set(hubs.map((h) => h.ip).filter(Boolean));
+    const hubMacs = new Set(hubs.map((h) => h.mac).filter(Boolean));
     const devs = new Map();
-    const override = (eid, name) => c.overrides[eid] || c.overrides[name] || {};
+    const override = (eid, name, mac) => c.overrides[eid] || c.overrides[name] || (mac && c.overrides[mac]) || {};
     const incl = c.include.map((r) => new RegExp(r, "i"));
     const excl = c.exclude.map((r) => new RegExp(r, "i"));
 
@@ -199,26 +254,34 @@ class NetzwerkKarte extends HTMLElement {
       for (const [eid, s] of Object.entries(st)) {
         if (!eid.startsWith("device_tracker.")) continue;
         const a = s.attributes || {};
-        if (!("connected_to" in a)) continue;
-        const name = a.friendly_name || eid;
-        const hay = `${name} ${eid}`;
+        const ip = a.ip || a.ip_address || a.ipv4 || "";
+        if (!("connected_to" in a) && !ip) continue;
+        const mac = normMac(a.mac || a.mac_address);
+        if ((ip && hubIps.has(ip)) || (mac && hubMacs.has(mac))) continue;
+        const name = a.friendly_name || a.host_name || eid;
+        const hay = `${name} ${eid} ${ip} ${mac}`;
         if (incl.length && !incl.some((r) => r.test(hay))) continue;
         if (excl.some((r) => r.test(hay))) continue;
-        const o = override(eid, name);
+        const o = override(eid, name, mac);
         if (o.hidden) continue;
         const online = isOnline(s.state);
         if (!online && !c.show_offline) continue;
-        devs.set(eid, {
-          entity: eid, name: o.name || name, hub: findHub(o.hub ?? a.connected_to).id,
+        const dev = {
+          entity: eid, name: o.name || name, hub: assign(o.hub, ip, a.connected_to).id,
           connection: o.connection || c.default_connection, online, icon: o.icon || iconFor(name),
-        });
+        };
+        const key = mac || eid;
+        const old = devs.get(key);
+        if (!old || (dev.online && !old.online)) devs.set(key, dev);
       }
     }
     c.devices.forEach((d) => {
       const s = d.entity ? st[d.entity] : null;
       const name = d.name || s?.attributes?.friendly_name || d.entity || "Gerät";
+      const ip = d.ip || s?.attributes?.ip || "";
+      if (d.entity) for (const [k, v] of devs) if (v.entity === d.entity) devs.delete(k);
       devs.set(d.entity || name, {
-        entity: d.entity || "", name, hub: findHub(d.hub).id, connection: d.connection || c.default_connection,
+        entity: d.entity || "", name, hub: assign(d.hub, ip, null).id, connection: d.connection || c.default_connection,
         online: d.entity ? isOnline(s?.state) : true, icon: d.icon || iconFor(name),
       });
     });
@@ -272,7 +335,7 @@ class NetzwerkKarte extends HTMLElement {
       m.hubs.forEach((o) => {
         if (o !== h && !o.main && (hubById[o.parent] || m.hubs[0]) === h) forb.push([dir(h, o), 0.5]);
       });
-      if (h.main) forb.push([dir(h, { px: 110, py: 92 }), 0.5]);
+      if (h.main) forb.push([dir(h, { px: 120, py: 100 }), 0.5]);
       let slots = [];
       for (let total = Math.max(n, 1); total <= n + 48; total++) {
         slots = [];
@@ -282,11 +345,12 @@ class NetzwerkKarte extends HTMLElement {
         }
         if (slots.length >= n) break;
       }
-      const r = clamp(110 + n * 10, 120, 290);
+      const r = clamp(110 + n * 9, 120, 250);
       ds.forEach((d, i) => {
         const a = slots[Math.min(slots.length - 1, Math.floor((i * slots.length) / Math.max(n, 1)))];
-        d.px = clamp(h.px + Math.cos(a) * r, 50, W - 50);
-        d.py = clamp(h.py + Math.sin(a) * r * 0.82, 44, H - 44);
+        const rr = n > 10 && i % 2 ? r + 45 : r;
+        d.px = clamp(h.px + Math.cos(a) * rr, 50, W - 50);
+        d.py = clamp(h.py + Math.sin(a) * rr * 0.82, 44, H - 44);
         d.a = a;
         d.hubRef = h;
       });
@@ -324,8 +388,8 @@ class NetzwerkKarte extends HTMLElement {
       </g>`;
 
     // Internet
-    const ix = 110;
-    const iy = 92;
+    const ix = 120;
+    const iy = 100;
     links += line(ix, iy, main.px, main.py, COLORS.internet, m.internet.online, 2);
     nodes += node(ix, iy, "mdi:earth", m.internet.online ? COLORS.internet : COLORS.bad, true, m.internet.entity, 26);
     labels += `<text class="hubname" x="${ix + 38}" y="${iy + 5}" fill="#f4f7ff" font-size="14" font-weight="700">${m.internet.online ? "Internet online" : "Internet offline"}</text>`;
@@ -343,7 +407,7 @@ class NetzwerkKarte extends HTMLElement {
     m.hubs.forEach((h) => {
       nodes += node(h.px, h.py, h.icon, h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, h.online, h.entity, h.main ? 32 : 26, "hub");
       labels += `<text class="hubname" x="${h.px}" y="${h.py + (h.main ? 56 : 50)}" text-anchor="middle" fill="#f4f7ff" font-size="14" font-weight="700">${esc(h.name)}</text>
-        <text class="count" x="${h.px}" y="${h.py + (h.main ? 72 : 66)}" text-anchor="middle" fill="#8ea3d4" font-size="11">${h.count} Geräte</text>`;
+        <text class="count" x="${h.px}" y="${h.py + (h.main ? 72 : 66)}" text-anchor="middle" fill="#8ea3d4" font-size="11">${esc(h.ssid ? `${h.ssid} · ` : "")}${h.count} Geräte</text>`;
     });
     m.devices.forEach((d) => {
       const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;

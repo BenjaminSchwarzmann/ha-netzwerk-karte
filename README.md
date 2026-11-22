@@ -1,18 +1,24 @@
 # Netzwerk-Karte für Home Assistant
 
-Lovelace-Karte, die dein Netzwerk als animierte Topologie zeigt: FRITZ!Box in der Mitte, Mesh-Repeater als eigene Knoten, darum herum die Geräte. Verbindungen sind nach Art eingefärbt (WLAN, LAN, Mesh, Internet), Offline-Geräte werden ausgegraut, oben stehen frei wählbare Kennzahlen. Ein Klick auf einen Knoten öffnet den Entitätsdialog.
+Lovelace-Karte, die dein Netzwerk als animierte Topologie zeigt: Firewall oder Router in der Mitte, daran Fritzboxen, Repeater oder Switches als eigene Knoten, darum herum die Geräte, automatisch nach IP-Subnetz zugeordnet. Verbindungen sind nach Art eingefärbt (WLAN, LAN, Mesh, Internet), Offline-Geräte werden ausgegraut, oben stehen frei wählbare Kennzahlen. Ein Klick auf einen Knoten öffnet den Entitätsdialog.
 
 Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 
 ## So kommen die Daten zustande
 
-- **Geräte:** Die Karte liest alle `device_tracker.*`-Entitäten der Integration *AVM FRITZ!Box Tools*. Sie haben das Attribut `connected_to` mit dem Namen des Zugangspunkts, an dem das Gerät hängt. Daraus ergibt sich, an welchem Repeater ein Gerät angezeigt wird.
-- **Repeater und andere Knoten:** Du legst sie unter `hubs` an. Der Name (oder `match`) muss zum Wert von `connected_to` passen.
+- **Geräte:** Die Karte liest alle `device_tracker.*`-Entitäten, die eine IP-Adresse (`ip`) oder das Attribut `connected_to` haben. Das liefert die Integration *AVM FRITZ!Box Tools*, jede eingerichtete Fritzbox mit ihren eigenen Clients.
+- **Zuordnung zum Router:** Automatisch, in dieser Reihenfolge:
+  1. Feste Vorgabe unter `overrides` oder `devices` (`hub`)
+  2. **IP-Subnetz:** Passt die IP eines Geräts in das `subnet` eines Hubs, hängt es dort (bei mehreren Treffern gewinnt das genauere Subnetz)
+  3. Attribut `connected_to`, verglichen mit dem Namen oder `match` eines Hubs
+  4. Sonst am Hauptknoten
+- **Zentrum und Router:** Der Hauptknoten (`main`) steht in der Mitte, z. B. eine Firewall. Router, Fritzboxen oder Repeater legst du unter `hubs` an. Mit `ip` und `mac` werden sie nicht als normale Geräte angezeigt, und über die MAC wird ihr Online-Status aus dem passenden Tracker übernommen.
+- **Doppelte Geräte:** Sieht mehr als eine Fritzbox dasselbe Gerät, gilt es einmal (Abgleich über die MAC), bevorzugt die Online-Meldung.
 - **Kennzahlen:** Beliebige Sensoren unter `stats`. Zeitstempel-Sensoren (z. B. Laufzeit) werden als Dauer dargestellt.
 
 ## Einschränkungen
 
-- Die FRITZ!Box kennt nur Geräte in ihrem eigenen Segment. Geräte hinter einem weiteren Router (z. B. OPNsense mit mehreren Subnetzen) erscheinen nicht automatisch. Trage sie unter `devices` ein, mit einer beliebigen Entität für den Online-Status (Ping, Binary-Sensor, Device-Tracker).
+- Die Zuordnung per Subnetz funktioniert nur, wenn die Tracker eine IP-Adresse liefern. Sieht eine Fritzbox Clients aus anderen Netzen nur als Hostnamen ohne IP, nutze `overrides` oder `include`/`exclude`.
 - Ob ein Gerät per LAN oder WLAN verbunden ist, liefert die Integration nicht zuverlässig. Standard ist `default_connection` (WLAN). Abweichungen legst du unter `overrides` fest.
 - Es gibt keinen grafischen Editor, die Konfiguration erfolgt per YAML.
 
@@ -37,13 +43,13 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 |---|---|---|
 | `title`, `subtitle` | Netzwerk, LAN · WLAN · Mesh | Kopfzeile |
 | `internet_entity` | – | Entität für den Internet-Status (`on` = online) |
-| `main` | `FRITZ!Box`, x 50, y 40 | Hauptknoten: `name`, `x`, `y`, `icon`, `entity` |
-| `hubs` | – | Weitere Knoten: `name`, `id`, `match`, `parent`, `link` (`mesh`/`lan`/`wlan`), `x`, `y`, `icon`, `entity` |
+| `main` | `Router`, x 50, y 34 | Hauptknoten in der Mitte: `name`, `x`, `y`, `icon`, `entity`, `subnet` |
+| `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
 | `show_offline` | `false` | Auch Offline-Geräte der FRITZ!Box anzeigen |
 | `include`, `exclude` | – | Listen von regulären Ausdrücken auf Name oder Entity-ID |
-| `devices` | – | Manuelle Geräte: `name`, `entity`, `hub`, `connection`, `icon` |
-| `overrides` | – | Pro Entity-ID oder Name: `name`, `hub`, `connection`, `icon`, `hidden` |
+| `devices` | – | Manuelle Geräte: `name`, `entity`, `ip`, `hub`, `connection`, `icon` |
+| `overrides` | – | Pro Entity-ID, Name oder MAC: `name`, `hub`, `connection`, `icon`, `hidden` |
 | `default_connection` | `wlan` | Verbindungsart für automatisch gefundene Geräte |
 | `max_name_length` | `20` | Namen werden darauf gekürzt |
 | `stats` | – | Kennzahlen: `entity`, `name`, `icon`, `unit`, `multiply`, `decimals`, `format: text` |
@@ -58,13 +64,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.1.0"
+git commit -m "Netzwerk-Karte 0.2.0"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.1.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.2.0`), damit Updates erkannt werden.
 
 ## Lizenz
 
