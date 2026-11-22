@@ -1,0 +1,57 @@
+type: custom:netzwerk-karte
+title: Netzwerk
+subtitle: LAN · WLAN · Mesh
+internet_entity: binary_sensor.fritz_box_7590_verbindung   # an deine Entität anpassen
+
+main:
+  name: FRITZ!Box 7590
+  x: 50          # Position in Prozent
+  y: 40
+
+hubs:
+  - name: FRITZ!Repeater 600   # Name wie im Attribut connected_to der Geräte
+    parent: main
+    link: mesh
+  - name: FRITZ!Repeater 310
+    link: mesh
+  - name: OPNsense             # Beispiel für ein Gerät, das die FRITZ!Box nicht kennt
+    id: opnsense
+    link: lan
+    x: 50
+    y: 80
+
+devices:                       # manuell, für alles ausserhalb der FRITZ!Box
+  - name: NAS
+    entity: binary_sensor.nas_erreichbar   # beliebige Entität, "on"/"home" = online
+    hub: opnsense
+    connection: lan
+    icon: mdi:nas
+
+overrides:                     # Feinschliff für automatisch gefundene Geräte
+  device_tracker.hp_laserjet:
+    connection: lan
+  device_tracker.iphone_von_max:
+    name: iPhone
+  device_tracker.altes_handy:
+    hidden: true
+
+exclude:
+  - "unbekannt"
+
+stats:
+  - entity: sensor.fritz_box_7590_download_durchsatz
+    name: Download
+    icon: mdi:download
+    multiply: 8                # kB/s in kbit/s
+    unit: kbit/s
+  - entity: sensor.fritz_box_7590_upload_durchsatz
+    name: Upload
+    icon: mdi:upload
+    multiply: 8
+    unit: kbit/s
+  - entity: sensor.fritz_box_7590_cpu_temperatur
+    name: CPU-Temp
+    icon: mdi:thermometer
+  - entity: sensor.fritz_box_7590_gerate_uptime
+    name: Box läuft seit
+    icon: mdi:timer-outline
