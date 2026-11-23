@@ -1,5 +1,6 @@
-/*! netzwerk-karte 0.3.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.3.0";
+/*! netzwerk-karte 0.4.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.4.0";
+const NAMES_KEY = "netzwerk-karte-namen";
 const W = 1500;
 const H = 880;
 const COLORS = {
@@ -114,6 +115,17 @@ const STYLE = `
   .menu a, .menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 10px;
     border-radius: 8px; color: #e8efff; text-decoration: none; font: inherit; font-size: 13px; background: none; border: 0; cursor: pointer; }
   .menu a:hover, .menu button:hover { background: rgba(47,212,255,.12); }
+  .menu .mh2 { padding: 0 10px 8px; font-size: 12px; color: #8ea3d4; }
+  .menu input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px;
+    color: #e8efff; background: #070d1f; border: 1px solid rgba(90,140,255,.45); outline: none; }
+  .menu input:focus { border-color: ${COLORS.wlan}; }
+  .menu .row { display: flex; gap: 6px; margin-top: 8px; }
+  .menu .row button { text-align: center; border: 1px solid rgba(90,140,255,.35); }
+  .menu.info { min-width: 300px; max-width: 420px; max-height: 85%; overflow: auto; }
+  .menu table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px; }
+  .menu td { padding: 3px 10px; vertical-align: top; word-break: break-word; }
+  .menu td:first-child { color: #8ea3d4; white-space: nowrap; padding-right: 4px; }
+  .menu .sep td { padding-top: 10px; font-size: 10px; letter-spacing: .1em; color: #6f84b8; }
   svg { display: block; width: 100%; min-width: 680px; height: auto; }
   .node { cursor: pointer; outline: none; }
   .node circle.ring { filter: drop-shadow(0 0 6px var(--c)); transition: transform .15s; transform-box: fill-box; transform-origin: center; }
@@ -140,11 +152,24 @@ class NetzwerkKarte extends HTMLElement {
     this._view = { k: 1, x: 0, y: 0 };
     this._drag = null;
     this._suppress = false;
+    this._names = {};
+    this._pending = false;
     const r = this._root;
     r.addEventListener("click", (e) => this._onClick(e));
     r.addEventListener("keydown", (e) => {
+      if (e.target && e.target.tagName === "INPUT") {
+        if (e.key === "Enter") this._saveInput(e.target);
+        else if (e.key === "Escape") this._closeMenu();
+        return;
+      }
       if (e.key === "Escape") this._closeMenu();
       else if (e.key === "Enter" || e.key === " ") this._onClick(e);
+    });
+    r.addEventListener("contextmenu", (e) => {
+      const n = e.target.closest ? e.target.closest("[data-dev]") : null;
+      if (!n) return;
+      e.preventDefault();
+      this._openRename(n.dataset.dev);
     });
     r.addEventListener(
       "wheel",
@@ -209,6 +234,7 @@ class NetzwerkKarte extends HTMLElement {
       auto_discover: true,
       show_offline: false,
       zoom: "wheel",
+      device_click: "info",
       include: [],
       exclude: [],
       default_connection: "wlan",
@@ -226,7 +252,65 @@ class NetzwerkKarte extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (!this._namesLoaded) this._loadNames();
     this._update();
+  }
+
+  // Eigene Gerätenamen: pro Benutzer in Home Assistant gespeichert (frontend/set_user_data),
+  // zusätzlich als Kopie im Browser. Schlüssel ist die MAC-Adresse, sonst die Entity-ID.
+  async _loadNames() {
+    if (this._namesLoaded || this._namesLoading) return;
+    this._namesLoading = true;
+    let remote = null;
+    let local = null;
+    try {
+      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: NAMES_KEY });
+      remote = r && r.value;
+    } catch (err) {
+      /* Speicher nicht erreichbar: nur lokale Kopie nutzen */
+    }
+    try {
+      local = JSON.parse(localStorage.getItem(NAMES_KEY) || "null");
+    } catch (err) {
+      /* ignorieren */
+    }
+    this._names = { ...(local || {}), ...(remote || {}) };
+    this._namesLoaded = true;
+    this._namesLoading = false;
+    this._key = "";
+    this._update();
+  }
+
+  async _setName(key, label) {
+    const clean = String(label || "").trim().slice(0, 60);
+    const next = { ...this._names };
+    if (clean) next[key] = clean;
+    else delete next[key];
+    this._names = next;
+    try {
+      localStorage.setItem(NAMES_KEY, JSON.stringify(next));
+    } catch (err) {
+      /* ignorieren */
+    }
+    this._closeMenu(true);
+    this._pending = false;
+    this._key = "";
+    this._update();
+    try {
+      // Erst den aktuellen Stand holen, damit Änderungen von anderen Geräten nicht überschrieben werden
+      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: NAMES_KEY });
+      const cur = (r && r.value) || {};
+      const merged = { ...next };
+      for (const [k, v] of Object.entries(cur)) if (k !== key && !(k in merged)) merged[k] = v;
+      await this._hass.callWS({ type: "frontend/set_user_data", key: NAMES_KEY, value: merged });
+      if (JSON.stringify(merged) !== JSON.stringify(this._names)) {
+        this._names = merged;
+        this._key = "";
+        this._update();
+      }
+    } catch (err) {
+      console.warn("netzwerk-karte: Namen konnten nicht in Home Assistant gespeichert werden", err);
+    }
   }
 
   getCardSize() {
@@ -250,16 +334,115 @@ class NetzwerkKarte extends HTMLElement {
     if (!t) return;
     const z = t.closest("[data-zoom]");
     if (z) return this._zoomBy(z.dataset.zoom);
-    if (t.closest(".menu")) {
-      const d = t.closest("[data-entity]");
-      if (d && d.dataset.entity) this._moreInfo(d.dataset.entity);
-      return this._closeMenu(); // Links öffnen sich über das Anker-Element selbst
+    const menu = t.closest(".menu");
+    if (menu) {
+      const b = t.closest("[data-act]");
+      if (b) return this._menuAct(b, menu);
+      if (t.closest("a")) return this._closeMenu(); // der Link öffnet sich über das Anker-Element selbst
+      return;
     }
+    const dev = t.closest("[data-dev]");
+    if (dev) return this._devClick(dev);
     const hub = t.closest("[data-hub]");
     if (hub) return this._hubClick(hub);
     this._closeMenu();
     const el = t.closest("[data-entity]");
     if (el && el.dataset.entity) this._moreInfo(el.dataset.entity);
+  }
+
+  _menuAct(b, menu) {
+    const act = b.dataset.act;
+    const key = menu.dataset.dev;
+    if (act === "save") return this._saveInput(menu.querySelector("input"));
+    if (act === "reset") return this._setName(key, "");
+    if (act === "rename") return this._openRename(key);
+    if (act === "more") {
+      this._closeMenu();
+      this._moreInfo(b.dataset.entity);
+    }
+  }
+
+  _saveInput(input) {
+    const menu = input && input.closest ? input.closest(".menu") : null;
+    if (menu) this._setName(menu.dataset.dev, input.value);
+  }
+
+  _devEl(key) {
+    return [...this._root.querySelectorAll("[data-dev]")].find((n) => n.dataset.dev === key);
+  }
+
+  _showMenu(html, anchor, cls = "", dev = "") {
+    this._closeMenu(true);
+    const wrap = this._root.querySelector(".wrap");
+    if (!wrap || !anchor) return null;
+    const menu = document.createElement("div");
+    menu.className = `menu ${cls}`.trim();
+    if (dev) menu.dataset.dev = dev;
+    menu.innerHTML = html;
+    wrap.appendChild(menu);
+    const nr = anchor.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    const left = Math.max(4, Math.min(nr.right - wr.left + 8, wr.width - menu.offsetWidth - 8));
+    const top = Math.max(4, Math.min(nr.top - wr.top, wr.height - menu.offsetHeight - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    return menu;
+  }
+
+  _devClick(el) {
+    this._closeMenu();
+    const d = this._m && this._m.devices.find((x) => x.key === el.dataset.dev);
+    if (!d) return;
+    if (this._config.device_click === "more-info" && d.entity) return this._moreInfo(d.entity);
+    this._openInfo(d, el);
+  }
+
+  _openInfo(d, el) {
+    const st = d.entity ? this._hass.states[d.entity] : null;
+    const a = (st && st.attributes) || {};
+    const lang = this._hass.locale?.language || "de";
+    const hub = this._m.hubs.find((h) => h.id === d.hub);
+    const rows = [
+      ["Status", d.online ? "Online" : "Offline"],
+      ["IP-Adresse", d.ip || a.ip || a.ip_address || ""],
+      ["MAC-Adresse", d.mac || a.mac || a.mac_address || ""],
+      ["Hostname", a.host_name || ""],
+      ["Verbunden mit", hub ? `${hub.name}${hub.ssid ? ` (${hub.ssid})` : ""}` : ""],
+      ["Verbindung", LABELS[d.connection] || d.connection],
+      ["Zugangspunkt laut Router", a.connected_to || ""],
+      ["Ursprünglicher Name", d.custom ? d.orig : ""],
+      ["Quelle", a.source_type || ""],
+      ["Entität", d.entity],
+      ["Zuletzt geändert", st && st.last_changed ? new Date(st.last_changed).toLocaleString(lang) : ""],
+    ].filter((r) => r[1] !== "" && r[1] != null);
+    const skip = ["friendly_name", "icon", "entity_picture", "ip", "ip_address", "mac", "mac_address", "host_name", "source_type", "connected_to", "supported_features"];
+    const extra = Object.entries(a)
+      .filter(([k, v]) => !skip.includes(k) && v !== "" && v != null)
+      .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)]);
+    const table = (r) => `<table>${r.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>`;
+    const html = `<div class="mh">${esc(d.name)}</div>${table(rows)}
+      ${extra.length ? `<table><tr class="sep"><td colspan="2">WEITERE ATTRIBUTE</td></tr>${extra.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
+      <div class="row"><button data-act="rename">Umbenennen</button>${d.entity ? `<button data-act="more" data-entity="${esc(d.entity)}">Entität öffnen</button>` : ""}</div>`;
+    this._showMenu(html, el, "info", d.key);
+  }
+
+  _openRename(key) {
+    const d = this._m && this._m.devices.find((x) => x.key === key);
+    const el = this._devEl(key);
+    if (!d || !el) return;
+    const menu = this._showMenu(
+      `<div class="mh">NAME ÄNDERN</div>${d.custom ? `<div class="mh2">Original: ${esc(d.orig)}</div>` : ""}
+       <input type="text" maxlength="60" value="${esc(d.name)}" placeholder="${esc(d.orig)}" aria-label="Neuer Name" />
+       <div class="row"><button data-act="save">Speichern</button>${d.custom ? `<button data-act="reset">Zurücksetzen</button>` : ""}</div>`,
+      el,
+      "edit",
+      key
+    );
+    const inp = menu && menu.querySelector("input");
+    if (inp) {
+      inp.focus();
+      inp.select();
+    }
   }
 
   _hubClick(el) {
@@ -273,27 +456,20 @@ class NetzwerkKarte extends HTMLElement {
       return;
     }
     if (n === 1) return this._moreInfo(h.entity);
-    const wrap = this._root.querySelector(".wrap");
-    if (!wrap) return;
     const items =
       h.links
         .map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name)}</a>`)
-        .join("") + (h.entity ? `<button data-entity="${esc(h.entity)}">Details anzeigen</button>` : "");
-    const menu = document.createElement("div");
-    menu.className = "menu";
-    menu.innerHTML = `<div class="mh">${esc(h.name)}</div>${items}`;
-    wrap.appendChild(menu);
-    const nr = el.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    const left = Math.max(4, Math.min(nr.right - wr.left + 8, wr.width - menu.offsetWidth - 8));
-    const top = Math.max(4, Math.min(nr.top - wr.top, wr.height - menu.offsetHeight - 8));
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
+        .join("") + (h.entity ? `<button data-act="more" data-entity="${esc(h.entity)}">Details anzeigen</button>` : "");
+    this._showMenu(`<div class="mh">${esc(h.name)}</div>${items}`, el);
   }
 
-  _closeMenu() {
+  _closeMenu(quiet) {
     const m = this._root.querySelector(".menu");
     if (m) m.remove();
+    if (!quiet && this._pending) {
+      this._pending = false;
+      this._update();
+    }
   }
 
   _applyView() {
@@ -324,6 +500,10 @@ class NetzwerkKarte extends HTMLElement {
     const model = this._model();
     const key = JSON.stringify(model);
     if (key === this._key) return;
+    if (this._root.querySelector(".menu.edit")) {
+      this._pending = true; // erst nach dem Schließen des Eingabefelds neu zeichnen
+      return;
+    }
     this._key = key;
     this._m = model;
     this._draw(model);
@@ -417,16 +597,18 @@ class NetzwerkKarte extends HTMLElement {
         const name = a.friendly_name || a.host_name || eid;
         const hay = `${name} ${eid} ${ip} ${mac}`;
         if (incl.length && !incl.some((r) => r.test(hay))) continue;
-        if (excl.some((r) => r.test(hay))) continue;
+        const key = mac || eid;
+        const custom = this._names[key] || "";
+        if (excl.some((r) => r.test(hay)) && !custom) continue;
         const o = override(eid, name, mac);
         if (o.hidden) continue;
         const online = isOnline(s.state);
         if (!online && !c.show_offline) continue;
         const dev = {
-          entity: eid, name: o.name || name, hub: assign(o.hub, ip, a.connected_to).id,
+          entity: eid, key, orig: name, custom: !!custom, ip, mac, name: custom || o.name || name,
+          hub: assign(o.hub, ip, a.connected_to).id,
           connection: o.connection || c.default_connection, online, icon: o.icon || iconFor(name),
         };
-        const key = mac || eid;
         const old = devs.get(key);
         if (!old || (dev.online && !old.online)) devs.set(key, dev);
       }
@@ -436,8 +618,11 @@ class NetzwerkKarte extends HTMLElement {
       const name = d.name || s?.attributes?.friendly_name || d.entity || "Gerät";
       const ip = d.ip || s?.attributes?.ip || "";
       if (d.entity) for (const [k, v] of devs) if (v.entity === d.entity) devs.delete(k);
-      devs.set(d.entity || name, {
-        entity: d.entity || "", name, hub: assign(d.hub, ip, null).id, connection: d.connection || c.default_connection,
+      const key = d.entity || `manual:${name}`;
+      const custom = this._names[key] || "";
+      devs.set(key, {
+        entity: d.entity || "", key, orig: name, custom: !!custom, ip, mac: normMac(s?.attributes?.mac), name: custom || name,
+        hub: assign(d.hub, ip, null).id, connection: d.connection || c.default_connection,
         online: d.entity ? isOnline(s?.state) : true, icon: d.icon || iconFor(name),
       });
     });
@@ -536,9 +721,9 @@ class NetzwerkKarte extends HTMLElement {
         stroke="${online ? color : COLORS.offline}" stroke-width="${online ? width : 1.2}" stroke-linecap="round"
         ${online ? `class="flow" opacity=".85"` : `stroke-dasharray="2 6" opacity=".5"`}/>`;
 
-    const node = (x, y, icon, color, online, entity, r, extra = "", hubId = "") => `
+    const node = (x, y, icon, color, online, entity, r, extra = "", hubId = "", devKey = "") => `
       <g class="node ${online ? "" : "off"} ${extra}" style="--c:${color}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"
-         ${hubId ? `data-hub="${esc(hubId)}" tabindex="0" role="button"` : entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
+         ${hubId ? `data-hub="${esc(hubId)}" tabindex="0" role="button"` : devKey ? `data-dev="${esc(devKey)}" ${entity ? `data-entity="${esc(entity)}"` : ""} tabindex="0" role="button"` : entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
         <circle class="ring" r="${r}" fill="#0c1530" stroke="${color}" stroke-width="2"/>
         <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}"><div xmlns="http://www.w3.org/1999/xhtml"><ha-icon icon="${esc(icon)}"></ha-icon></div></foreignObject>
       </g>`;
@@ -567,7 +752,7 @@ class NetzwerkKarte extends HTMLElement {
     });
     m.devices.forEach((d) => {
       const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;
-      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17);
+      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17, "", "", d.key);
       const c = Math.cos(d.a);
       const s = Math.sin(d.a);
       const w = Math.min(d.name.length, this._config.max_name_length) * 6.3 + 16;

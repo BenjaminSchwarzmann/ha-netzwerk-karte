@@ -40,7 +40,17 @@ Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 - **Zoomen:** Mausrad über der Karte. Der Punkt unter dem Mauszeiger bleibt dabei stehen. Auf Wunsch nur mit Strg (`zoom: ctrl`), damit die Seite normal scrollt.
 - **Verschieben:** Mit gedrückter linker oder mittlerer Maustaste ziehen.
 - **Zurücksetzen:** Doppelklick auf den Hintergrund oder die Schaltfläche ⟲. Die Schaltflächen + und − helfen auch auf Touchgeräten.
+- **Gerät anklicken:** Es öffnet sich ein Infofenster mit Status, IP- und MAC-Adresse, Hostname, Router, Verbindungsart, Entität, letzter Änderung und allen weiteren Attributen des Trackers. Dort gibt es die Schaltflächen *Umbenennen* und *Entität öffnen*. Mit `device_click: more-info` öffnet stattdessen direkt der Home-Assistant-Dialog.
+- **Gerät umbenennen:** Rechtsklick auf das Gerät (oder *Umbenennen* im Infofenster, auch auf Touchgeräten). Name eintragen, mit Enter bestätigen. *Zurücksetzen* stellt den Originalnamen wieder her.
 - **Router anklicken:** Hat ein Knoten einen Link, öffnet sich die Weboberfläche in einem neuen Fenster. Bei mehreren Zielen erscheint ein kleines Menü. Normale Geräte öffnen den Entitätsdialog.
+
+## Eigene Gerätenamen
+
+Namen, die du per Rechtsklick vergibst, werden **an die MAC-Adresse des Geräts gebunden** (bei Geräten ohne MAC an die Entity-ID). Sie bleiben deshalb nach einem Neustart, bei neuer IP-Adresse oder geändertem Hostnamen erhalten.
+
+- Gespeichert wird in den Benutzerdaten von Home Assistant (`frontend/set_user_data`, Schlüssel `netzwerk-karte-namen`), zusätzlich als Kopie im Browser. Die Namen gelten damit auf allen Geräten, auf denen du angemeldet bist.
+- Die Daten gehören zu deinem Benutzerkonto. Andere Benutzer sehen deine Namen nicht. Für Namen, die alle sehen sollen, nutze `overrides` in der YAML-Konfiguration.
+- Ein eigener Name hat Vorrang vor `overrides`. Geräte mit eigenem Namen werden auch dann angezeigt, wenn sie durch `exclude` ausgeblendet würden.
 
 ## Konfiguration
 
@@ -52,6 +62,7 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `internet_entity` | – | Entität für den Internet-Status (`on` = online) |
 | `main` | `Router`, x 50, y 34 | Hauptknoten in der Mitte: `name`, `x`, `y`, `icon`, `entity`, `subnet` |
 | `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `url`, `gateway`, `links`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
+| `device_click` | `info` | Klick auf ein Gerät: `info` (Infofenster) oder `more-info` (Home-Assistant-Dialog) |
 | `zoom` | `wheel` | Zoom per Mausrad (`wheel`), nur mit gedrückter Strg-Taste (`ctrl`) oder aus (`off`) |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
 | `show_offline` | `false` | Auch Offline-Geräte der FRITZ!Box anzeigen |
@@ -78,13 +89,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.3.0"
+git commit -m "Netzwerk-Karte 0.4.0"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.0`), damit Updates erkannt werden.
 
 ## Lizenz
 
