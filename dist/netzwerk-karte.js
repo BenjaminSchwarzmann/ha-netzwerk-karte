@@ -1,6 +1,8 @@
-/*! netzwerk-karte 0.5.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.5.0";
+/*! netzwerk-karte 0.3.3 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.3.3";
 const NAMES_KEY = "netzwerk-karte-namen";
+const POS_KEY = "netzwerk-karte-positionen";
+const OPT_KEY = "netzwerk-karte-optionen";
 const W = 1500;
 const H = 880;
 const COLORS = {
@@ -143,6 +145,11 @@ const STYLE = `
   .node:hover circle.ring, .node:focus-visible circle.ring { transform: scale(1.12); }
   .node.off { opacity: .55; }
   .node.lease circle.ring { stroke-dasharray: 5 3; }
+  .node.hid { opacity: .4; }
+  .legend .ver { margin-right: auto; opacity: .55; }
+  .legend [data-toggle] { cursor: pointer; padding: 2px 10px; border: 1px solid rgba(90,140,255,.3); border-radius: 999px; }
+  .legend [data-toggle]:hover { border-color: var(--c); }
+  .legend [data-toggle].inactive { opacity: .55; text-decoration: line-through; }
   .node foreignObject div { display: grid; place-items: center; width: 100%; height: 100%; color: var(--c); }
   .node ha-icon { --mdc-icon-size: 20px; }
   .node.hub ha-icon { --mdc-icon-size: 30px; }
@@ -165,6 +172,13 @@ class NetzwerkKarte extends HTMLElement {
     this._drag = null;
     this._suppress = false;
     this._names = {};
+    this._pos = {};
+    this._opts = {};
+    this._showHidden = false;
+    this._vb = { x: 0, y: 0, w: W, h: H };
+    this._inet = { px: 750, py: 70 };
+    this._cur = {};
+    this._els = {};
     this._pending = false;
     const r = this._root;
     r.addEventListener("click", (e) => this._onClick(e));
@@ -191,8 +205,9 @@ class NetzwerkKarte extends HTMLElement {
         if (!sc || (this._config.zoom === "ctrl" && !e.ctrlKey)) return;
         e.preventDefault();
         const rect = sc.querySelector("svg").getBoundingClientRect();
+        const vb = this._vb;
         const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
-        this._zoomAt(((e.clientX - rect.left) * W) / rect.width, ((e.clientY - rect.top) * H) / rect.height, Math.exp(-dy * 0.0015));
+        this._zoomAt(vb.x + ((e.clientX - rect.left) * vb.w) / rect.width, vb.y + ((e.clientY - rect.top) * vb.h) / rect.height, Math.exp(-dy * 0.0015));
       },
       { passive: false }
     );
@@ -204,38 +219,75 @@ class NetzwerkKarte extends HTMLElement {
       const t = e.target;
       const sc = t.closest ? t.closest(".scroll") : null;
       if (!sc || t.closest(".zoom") || t.closest(".menu")) return;
-      this._drag = { id: e.pointerId, x: e.clientX, y: e.clientY, vx: this._view.x, vy: this._view.y, moved: false, sc };
-      if (sc.setPointerCapture) sc.setPointerCapture(e.pointerId);
+      const ne = e.button === 0 && this._config && this._config.drag_nodes !== false && t.closest ? t.closest("[data-node]") : null;
+      const nid = ne ? ne.dataset.node : "";
+      // Wichtig: Der Zeiger wird erst beim tatsächlichen Ziehen "gefangen", nicht schon beim Drücken.
+      // Sonst landet der folgende Klick auf dem Container statt auf dem Knoten.
+      if (nid && this._cur[nid]) {
+        const kids = nid.startsWith("h:")
+          ? ((this._m && this._m.devices) || []).filter((d) => d.hub === nid.slice(2)).map((d) => `d:${d.key}`).filter((k) => this._cur[k])
+          : [];
+        this._drag = {
+          kind: "node", id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, sc, nid,
+          ox: this._cur[nid].x, oy: this._cur[nid].y, last: null,
+          kids: kids.map((k) => ({ nid: k, x: this._cur[k].x, y: this._cur[k].y })),
+        };
+      } else {
+        this._drag = { kind: "pan", id: e.pointerId, x: e.clientX, y: e.clientY, vx: this._view.x, vy: this._view.y, moved: false, sc };
+      }
     });
     r.addEventListener("pointermove", (e) => {
       const d = this._drag;
       if (!d || e.pointerId !== d.id) return;
+      if (e.buttons === 0) return this._endDrag(); // Taste wurde außerhalb losgelassen
       const dx = e.clientX - d.x;
       const dy = e.clientY - d.y;
-      if (!d.moved && Math.hypot(dx, dy) < 4) return;
-      d.moved = true;
-      d.sc.classList.add("drag");
+      if (!d.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        d.moved = true;
+        d.sc.classList.add("drag");
+        try {
+          d.sc.setPointerCapture(d.id);
+        } catch (err) {
+          /* ignorieren */
+        }
+      }
       const rect = d.sc.querySelector("svg").getBoundingClientRect();
-      this._view.x = d.vx + (dx * W) / rect.width;
-      this._view.y = d.vy + (dy * H) / rect.height;
+      const vb = this._vb;
+      if (d.kind === "node") {
+        const k = this._view.k;
+        const nx = clamp(d.ox + (dx * vb.w) / rect.width / k, -6000, 8000);
+        const ny = clamp(d.oy + (dy * vb.h) / rect.height / k, -6000, 8000);
+        this._moveTo(d.nid, nx, ny);
+        d.kids.forEach((kd) => this._moveTo(kd.nid, kd.x + (nx - d.ox), kd.y + (ny - d.oy)));
+        d.last = { x: nx, y: ny };
+        return;
+      }
+      this._view.x = d.vx + (dx * vb.w) / rect.width;
+      this._view.y = d.vy + (dy * vb.h) / rect.height;
       this._applyView();
     });
-    const end = () => {
-      const d = this._drag;
-      if (!d) return;
-      d.sc.classList.remove("drag");
-      if (d.moved) {
-        this._suppress = true;
-        setTimeout(() => (this._suppress = false), 0);
-      }
-      this._drag = null;
-    };
-    r.addEventListener("pointerup", end);
-    r.addEventListener("pointercancel", end);
+    r.addEventListener("pointerup", () => this._endDrag());
+    r.addEventListener("pointercancel", () => this._endDrag());
     r.addEventListener("dblclick", (e) => {
       const t = e.target;
-      if (t.closest && t.closest(".scroll") && !t.closest(".node")) this._zoomBy("reset");
+      if (!t.closest || !t.closest(".scroll")) return;
+      const ne = t.closest("[data-node]");
+      if (ne) this._persist(POS_KEY, "_pos", ne.dataset.node, null); // Position dieses Knotens zurücksetzen
+      else if (!t.closest(".node")) this._zoomBy("reset");
     });
+  }
+
+  _endDrag() {
+    const d = this._drag;
+    if (!d) return;
+    d.sc.classList.remove("drag");
+    this._drag = null;
+    if (d.moved) {
+      this._suppress = true;
+      setTimeout(() => (this._suppress = false), 0);
+      if (d.kind === "node" && d.last) this._commitMove(d);
+    }
   }
 
   setConfig(config) {
@@ -247,6 +299,9 @@ class NetzwerkKarte extends HTMLElement {
       show_offline: false,
       zoom: "wheel",
       device_click: "info",
+      show_ip: true,
+      drag_nodes: true,
+      label_mode: "auto",
       include: [],
       exclude: [],
       default_connection: "wlan",
@@ -264,65 +319,137 @@ class NetzwerkKarte extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._namesLoaded) this._loadNames();
+    if (!this._namesLoaded) this._loadStores();
     this._update();
   }
 
-  // Eigene Gerätenamen: pro Benutzer in Home Assistant gespeichert (frontend/set_user_data),
-  // zusätzlich als Kopie im Browser. Schlüssel ist die MAC-Adresse, sonst die Entity-ID.
-  async _loadNames() {
+  // Eigene Gerätenamen und Knotenpositionen: pro Benutzer in Home Assistant gespeichert
+  // (frontend/set_user_data), zusätzlich als Kopie im Browser.
+  async _loadStores() {
     if (this._namesLoaded || this._namesLoading) return;
     this._namesLoading = true;
-    let remote = null;
-    let local = null;
-    try {
-      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: NAMES_KEY });
-      remote = r && r.value;
-    } catch (err) {
-      /* Speicher nicht erreichbar: nur lokale Kopie nutzen */
-    }
-    try {
-      local = JSON.parse(localStorage.getItem(NAMES_KEY) || "null");
-    } catch (err) {
-      /* ignorieren */
-    }
-    this._names = { ...(local || {}), ...(remote || {}) };
+    const load = async (key) => {
+      let remote = null;
+      let local = null;
+      try {
+        const r = await this._hass.callWS({ type: "frontend/get_user_data", key });
+        remote = r && r.value;
+      } catch (err) {
+        /* Speicher nicht erreichbar: nur lokale Kopie nutzen */
+      }
+      try {
+        local = JSON.parse(localStorage.getItem(key) || "null");
+      } catch (err) {
+        /* ignorieren */
+      }
+      return { ...(local || {}), ...(remote || {}) };
+    };
+    this._names = await load(NAMES_KEY);
+    this._pos = await load(POS_KEY);
+    this._opts = await load(OPT_KEY);
     this._namesLoaded = true;
     this._namesLoading = false;
     this._key = "";
     this._update();
   }
 
-  async _setName(key, label) {
-    const clean = String(label || "").trim().slice(0, 60);
-    const next = { ...this._names };
-    if (clean) next[key] = clean;
-    else delete next[key];
-    this._names = next;
+  // Einen Eintrag setzen (value null oder "" löscht ihn), sofort neu zeichnen und danach speichern
+  async _persist(storeKey, prop, key, value) {
+    const next = { ...this[prop] };
+    if (value == null || value === "") delete next[key];
+    else next[key] = value;
+    this[prop] = next;
     try {
-      localStorage.setItem(NAMES_KEY, JSON.stringify(next));
+      localStorage.setItem(storeKey, JSON.stringify(next));
     } catch (err) {
       /* ignorieren */
     }
-    this._closeMenu(true);
-    this._pending = false;
     this._key = "";
     this._update();
     try {
       // Erst den aktuellen Stand holen, damit Änderungen von anderen Geräten nicht überschrieben werden
-      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: NAMES_KEY });
+      const r = await this._hass.callWS({ type: "frontend/get_user_data", key: storeKey });
       const cur = (r && r.value) || {};
       const merged = { ...next };
       for (const [k, v] of Object.entries(cur)) if (k !== key && !(k in merged)) merged[k] = v;
-      await this._hass.callWS({ type: "frontend/set_user_data", key: NAMES_KEY, value: merged });
-      if (JSON.stringify(merged) !== JSON.stringify(this._names)) {
-        this._names = merged;
+      await this._hass.callWS({ type: "frontend/set_user_data", key: storeKey, value: merged });
+      if (JSON.stringify(merged) !== JSON.stringify(this[prop])) {
+        this[prop] = merged;
         this._key = "";
         this._update();
       }
     } catch (err) {
-      console.warn("netzwerk-karte: Namen konnten nicht in Home Assistant gespeichert werden", err);
+      console.warn("netzwerk-karte: Daten konnten nicht in Home Assistant gespeichert werden", err);
     }
+  }
+
+  async _setName(key, label) {
+    const clean = String(label || "").trim().slice(0, 60);
+    this._closeMenu(true);
+    this._pending = false;
+    await this._persist(NAMES_KEY, "_names", key, clean);
+  }
+
+  _commitMove(d) {
+    const round = (v) => Math.round(v * 10) / 10;
+    if (d.nid.startsWith("h:")) {
+      this._persist(POS_KEY, "_pos", d.nid, { x: round(d.last.x), y: round(d.last.y) });
+      return;
+    }
+    const dev = ((this._m && this._m.devices) || []).find((x) => `d:${x.key}` === d.nid);
+    const hub = dev && this._cur[`h:${dev.hub}`];
+    if (!hub) return;
+    this._persist(POS_KEY, "_pos", d.nid, { hub: dev.hub, dx: round(d.last.x - hub.x), dy: round(d.last.y - hub.y) });
+  }
+
+  async _resetLayout() {
+    if (!Object.keys(this._pos).length) return;
+    if (!window.confirm("Alle gespeicherten Positionen zurücksetzen?")) return;
+    this._pos = {};
+    try {
+      localStorage.removeItem(POS_KEY);
+    } catch (err) {
+      /* ignorieren */
+    }
+    this._key = "";
+    this._update();
+    try {
+      await this._hass.callWS({ type: "frontend/set_user_data", key: POS_KEY, value: {} });
+    } catch (err) {
+      /* ignorieren */
+    }
+  }
+
+  // Knoten live verschieben: Position, Beschriftung und Linien direkt im DOM anpassen
+  _moveTo(id, x, y) {
+    this._cur[id] = { x, y };
+    const e = this._els[id];
+    if (!e) return;
+    const f = (v) => v.toFixed(1);
+    if (e.node) e.node.setAttribute("transform", `translate(${f(x)} ${f(y)})`);
+    e.labs.forEach((l) =>
+      l.setAttribute("transform", `translate(${f(x + Number(l.dataset.dx))} ${f(y + Number(l.dataset.dy))})${l.dataset.rot ? ` rotate(${l.dataset.rot})` : ""}`)
+    );
+    e.a.forEach((l) => {
+      l.setAttribute("x1", f(x));
+      l.setAttribute("y1", f(y));
+    });
+    e.b.forEach((l) => {
+      l.setAttribute("x2", f(x));
+      l.setAttribute("y2", f(y));
+    });
+  }
+
+  _indexEls() {
+    const els = {};
+    const get = (id) => (els[id] = els[id] || { node: null, labs: [], a: [], b: [] });
+    this._root.querySelectorAll("[data-node]").forEach((n) => (get(n.dataset.node).node = n));
+    this._root.querySelectorAll("[data-lab]").forEach((n) => get(n.dataset.lab).labs.push(n));
+    this._root.querySelectorAll("line[data-a]").forEach((l) => {
+      get(l.dataset.a).a.push(l);
+      get(l.dataset.b).b.push(l);
+    });
+    this._els = els;
   }
 
   getCardSize() {
@@ -346,6 +473,8 @@ class NetzwerkKarte extends HTMLElement {
     if (!t) return;
     const z = t.closest("[data-zoom]");
     if (z) return this._zoomBy(z.dataset.zoom);
+    const tg = t.closest("[data-toggle]");
+    if (tg) return this._toggle(tg.dataset.toggle);
     const menu = t.closest(".menu");
     if (menu) {
       const b = t.closest("[data-act]");
@@ -368,9 +497,24 @@ class NetzwerkKarte extends HTMLElement {
     if (act === "save") return this._saveInput(menu.querySelector("input"));
     if (act === "reset") return this._setName(key, "");
     if (act === "rename") return this._openRename(key);
+    if (act === "hide" || act === "unhide") {
+      this._closeMenu(true);
+      return this._persist(OPT_KEY, "_opts", `hide:${key}`, act === "hide" ? "1" : null);
+    }
     if (act === "more") {
       this._closeMenu();
       this._moreInfo(b.dataset.entity);
+    }
+  }
+
+  _toggle(name) {
+    if (name === "hidden") {
+      this._showHidden = !this._showHidden;
+      this._key = "";
+      this._update();
+    } else if (name === "leases") {
+      const visible = this._m ? this._m.leasesVisible : true;
+      this._persist(OPT_KEY, "_opts", "leases", visible ? "hide" : "show");
     }
   }
 
@@ -455,7 +599,7 @@ class NetzwerkKarte extends HTMLElement {
     const html = `<div class="mh">${esc(d.name)}</div>${table(rows)}
       ${extra.length ? `<table><tr class="sep"><td colspan="2">WEITERE ATTRIBUTE</td></tr>${extra.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
       ${leaseRows.length ? `<table><tr class="sep"><td colspan="2">DHCP-LEASE (OPNSENSE)</td></tr>${leaseRows.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
-      <div class="row"><button data-act="rename">Umbenennen</button>${d.entity ? `<button data-act="more" data-entity="${esc(d.entity)}">Entität öffnen</button>` : ""}</div>`;
+      <div class="row"><button data-act="rename">Umbenennen</button><button data-act="${d.hidden ? "unhide" : "hide"}">${d.hidden ? "Einblenden" : "Ausblenden"}</button>${d.entity ? `<button data-act="more" data-entity="${esc(d.entity)}">Entität öffnen</button>` : ""}</div>`;
     this._showMenu(html, el, "info", d.key);
   }
 
@@ -522,10 +666,11 @@ class NetzwerkKarte extends HTMLElement {
   }
 
   _zoomBy(a) {
-    if (a === "reset") {
+    if (a === "layout") this._resetLayout();
+    else if (a === "reset") {
       this._view = { k: 1, x: 0, y: 0 };
       this._applyView();
-    } else this._zoomAt(W / 2, H / 2, a === "in" ? 1.25 : 0.8);
+    } else this._zoomAt(this._vb.x + this._vb.w / 2, this._vb.y + this._vb.h / 2, a === "in" ? 1.25 : 0.8);
   }
 
   _update() {
@@ -573,6 +718,7 @@ class NetzwerkKarte extends HTMLElement {
         link: main ? "lan" : h.link || "lan",
         x: main ? h.x : h.x ?? p[0],
         y: main ? h.y : h.y ?? p[1],
+        fixed: main ? true : h.x != null && h.y != null,
         entity: h.entity || null,
         icon: h.icon || (iconFor(name) !== "mdi:devices" ? iconFor(name) : main ? "mdi:router-wireless" : "mdi:router-wireless"),
         ssid: h.ssid || "",
@@ -667,6 +813,9 @@ class NetzwerkKarte extends HTMLElement {
     });
     // DHCP-Leases aus OPNsense (Kea): Clients ohne passenden Tracker zusätzlich anzeigen
     const lc = c.leases && c.leases.entity ? c.leases : null;
+    const lopt = this._opts.leases;
+    const leasesVisible = lopt === "hide" ? false : lopt === "show" ? true : !(lc && lc.show === false);
+    let leaseCount = 0;
     if (lc) {
       const lincl = list(lc.include).map((r) => new RegExp(r, "i"));
       const lexcl = list(lc.exclude).map((r) => new RegExp(r, "i"));
@@ -688,12 +837,22 @@ class NetzwerkKarte extends HTMLElement {
         if (lexcl.some((x) => x.test(hay)) && !custom) continue;
         if (seen.has(key)) continue;
         seen.add(key);
+        leaseCount++;
+        if (!leasesVisible) continue;
         devs.set(key, {
           entity: "", key, orig: f.host || f.mac || f.ip, custom: !!custom, ip: f.ip, mac: f.mac,
           name: custom || f.host || f.mac || f.ip, hub: assign(null, f.ip, f.iface).id,
           connection: "dhcp", online: true, icon: iconFor(f.host), lease: true,
         });
       }
+    }
+    // Einzeln ausgeblendete Geräte (Infofenster → Ausblenden)
+    let hiddenCount = 0;
+    for (const [k, dv] of [...devs]) {
+      if (this._opts[`hide:${dv.key}`] !== "1") continue;
+      hiddenCount++;
+      if (this._showHidden) dv.hidden = true;
+      else devs.delete(k);
     }
     const devices = [...devs.values()].sort((a, b) => a.hub.localeCompare(b.hub) || a.name.localeCompare(b.name));
 
@@ -718,123 +877,311 @@ class NetzwerkKarte extends HTMLElement {
     });
 
     const internet = { online: c.internet_entity ? isOnline(st[c.internet_entity]?.state) : true, entity: c.internet_entity || "" };
-    return { hubs, devices, stats, internet };
+    return { hubs, devices, stats, internet, leaseCount, leasesVisible, hiddenCount, showHidden: !!this._showHidden };
   }
 
   _layout(m) {
+    const cfg = this._config;
+    const showIp = cfg.show_ip !== false;
+    const maxN = cfg.max_name_length;
+    const TWO_PI = Math.PI * 2;
     const byHub = {};
     m.devices.forEach((d) => (byHub[d.hub] = byHub[d.hub] || []).push(d));
     const hubById = Object.fromEntries(m.hubs.map((h) => [h.id, h]));
+    const MAIN = m.hubs[0];
+    const labelSize = (d) => {
+      const ip = showIp ? d.ip || "" : "";
+      const tl = Math.min(d.name.length, maxN);
+      return { ip, w: Math.round(Math.max(tl * 6.3, ip.length * 5.6) + 16), h: ip ? 32 : 20 };
+    };
+
+    // 1. Ringgröße je Router. Viele Geräte: Beschriftungen werden radial (längs der Verbindungslinie) gedreht,
+    //    dann genügt ein Ring mit Abstand von etwa einer Beschriftungshöhe zwischen den Knoten.
     m.hubs.forEach((h) => {
-      h.px = clamp((h.x / 100) * W, 80, W - 80);
-      h.py = clamp((h.y / 100) * H, 80, H - 80);
+      const n = (byHub[h.id] || []).length;
+      h.radial = cfg.label_mode === "radial" || (cfg.label_mode !== "horizontal" && n > 10);
+      const r = n ? clamp((n * (h.radial ? 44 : 58)) / TWO_PI, h.radial ? 120 : 110, 520) : 0;
+      h.count = n;
+      h.ring = { n, r, outer: r };
+      h.squash = h.radial ? 0.92 : 0.85;
     });
+
+    // 2. Positionen der Router: gespeichert > fest konfiguriert > automatisch
+    m.hubs.forEach((h) => {
+      const sp = this._pos["h:" + h.id];
+      h.pin = true;
+      if (sp && isFinite(sp.x) && isFinite(sp.y)) {
+        h.px = sp.x;
+        h.py = sp.y;
+      } else if (h.fixed) {
+        h.px = (h.x / 100) * W;
+        h.py = (h.y / 100) * H;
+      } else h.pin = false;
+    });
+    const INET = { px: MAIN.px, py: MAIN.py - 230 };
+    this._inet = INET;
+    const pseudo = { px: INET.px, py: INET.py, pin: true, ring: { n: 0, r: 0 }, radial: false, fixedReach: 150 };
+    const reach = (h) => h.fixedReach ?? (h.ring.n ? h.ring.r + (h.radial ? 24 + 150 : 60) : 60);
+    const ANG = [190, -10, 90, 150, 30, -90, 125, 55];
+    let k = 0;
+    m.hubs.forEach((h) => {
+      if (h.pin) return;
+      const a = ((ANG[k % ANG.length] + Math.floor(k / ANG.length) * 22) * Math.PI) / 180;
+      const dist = Math.max(320, reach(MAIN) * 0.6 + reach(h) * 0.75 + 150);
+      h.px = MAIN.px + Math.cos(a) * dist;
+      h.py = MAIN.py + Math.sin(a) * dist * 0.8;
+      k++;
+    });
+    // Überlappende Cluster auseinanderschieben (nur automatisch platzierte Router)
+    const relax = [...m.hubs, pseudo];
+    for (let it = 0; it < 150; it++) {
+      let moved = false;
+      for (let i = 0; i < relax.length; i++) {
+        for (let j = i + 1; j < relax.length; j++) {
+          const a = relax[i];
+          const b = relax[j];
+          if (a.pin && b.pin) continue;
+          const dx = b.px - a.px;
+          const dy = (b.py - a.py) / 0.85;
+          const dist = Math.hypot(dx, dy) || 0.01;
+          const need = reach(a) + reach(b) - 30;
+          if (dist >= need) continue;
+          const push = need - dist;
+          const ux = dx / dist;
+          const uy = (dy / dist) * 0.85;
+          const fa = a.pin ? 0 : b.pin ? 1 : 0.5;
+          const fb = b.pin ? 0 : a.pin ? 1 : 0.5;
+          a.px -= ux * push * fa;
+          a.py -= uy * push * fa;
+          b.px += ux * push * fb;
+          b.py += uy * push * fb;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+
+    // 3. Geräte auf einem Ring um ihren Router
     const dir = (a, b) => Math.atan2(b.py - a.py, b.px - a.px);
     const near = (a, b, t) => {
-      let d = Math.abs(a - b) % (2 * Math.PI);
-      if (d > Math.PI) d = 2 * Math.PI - d;
+      let d = Math.abs(a - b) % TWO_PI;
+      if (d > Math.PI) d = TWO_PI - d;
       return d < t;
     };
     m.hubs.forEach((h) => {
       const ds = byHub[h.id] || [];
       const n = ds.length;
-      h.count = n;
-      // Richtungen zu Nachbarn freihalten, damit sich Beschriftungen nicht überlagern
-      const forb = [];
-      if (!h.main) forb.push([dir(h, hubById[h.parent] || m.hubs[0]), 0.9]);
+      const forb = []; // Richtungen zu Nachbarn freihalten
+      if (!h.main) forb.push([dir(h, hubById[h.parent] || MAIN), 0.9]);
       m.hubs.forEach((o) => {
-        if (o !== h && !o.main && (hubById[o.parent] || m.hubs[0]) === h) forb.push([dir(h, o), 0.5]);
+        if (o !== h && !o.main && (hubById[o.parent] || MAIN) === h) forb.push([dir(h, o), 0.5]);
       });
-      if (h.main) forb.push([dir(h, { px: 120, py: 100 }), 0.5]);
+      if (h.main) forb.push([dir(h, INET), 0.5]);
       let slots = [];
       for (let total = Math.max(n, 1); total <= n + 48; total++) {
         slots = [];
         for (let j = 0; j < total; j++) {
-          const a = -Math.PI / 2 + (2 * Math.PI * j) / total;
+          const a = -Math.PI / 2 + (TWO_PI * j) / total;
           if (!forb.some(([f, t]) => near(a, f, t))) slots.push(a);
         }
         if (slots.length >= n) break;
       }
-      const r = clamp(110 + n * 9, 120, 250);
       ds.forEach((d, i) => {
         const a = slots[Math.min(slots.length - 1, Math.floor((i * slots.length) / Math.max(n, 1)))];
-        const rr = n > 10 && i % 2 ? r + 45 : r;
-        d.px = clamp(h.px + Math.cos(a) * rr, 50, W - 50);
-        d.py = clamp(h.py + Math.sin(a) * rr * 0.82, 44, H - 44);
+        d.px = h.px + Math.cos(a) * h.ring.r;
+        d.py = h.py + Math.sin(a) * h.ring.r * h.squash;
         d.a = a;
         d.hubRef = h;
+        const sd = this._pos["d:" + d.key];
+        if (sd && sd.hub === h.id && isFinite(sd.dx) && isFinite(sd.dy)) {
+          d.px = h.px + sd.dx;
+          d.py = h.py + sd.dy;
+        }
       });
     });
+
+    // 4. Beschriftungen: Hindernisse sammeln (Knoten, Router-Beschriftungen)
+    const obs = [];
+    const box = (x0, y0, x1, y1) => obs.push({ x0, y0, x1, y1 });
+    box(INET.px - 30, INET.py - 30, INET.px + 190, INET.py + 30);
+    m.hubs.forEach((h) => {
+      const rr = h.main ? 32 : 26;
+      box(h.px - rr - 3, h.py - rr - 3, h.px + rr + 3, h.py + rr + 3);
+      const y0 = h.main ? 56 : 50;
+      const sub = `${h.ssid ? `${h.ssid} · ` : ""}${h.count} Geräte`;
+      const ww = Math.max(h.name.length * 8.4, sub.length * 6.2, showIp && h.ip ? h.ip.length * 5.8 : 0) + 8;
+      box(h.px - ww / 2, h.py + y0 - 14, h.px + ww / 2, h.py + y0 + (showIp && h.ip ? 36 : 20));
+    });
+    m.devices.forEach((d) => box(d.px - 20, d.py - 20, d.px + 20, d.py + 20));
+
+    // 4a. Radiale Beschriftungen (dichte Router): längs der Linie nach außen, immer aufrecht lesbar
+    m.devices.forEach((d) => {
+      if (!d.hubRef.radial) return;
+      const { ip, w, h } = labelSize(d);
+      const ang = Math.atan2(d.py - d.hubRef.py, d.px - d.hubRef.px);
+      let deg = (ang * 180) / Math.PI;
+      let side = "start";
+      if (deg > 90 || deg < -90) {
+        deg += deg > 0 ? -180 : 180;
+        side = "end";
+      }
+      const ox = side === "start" ? 24 : -24;
+      d.lab = { mode: "radial", side, ox, oy: 0, rot: deg, ip, w, h };
+      const ax = side === "start" ? ox : ox - w;
+      const rad = (deg * Math.PI) / 180;
+      const cs = Math.cos(rad);
+      const sn = Math.sin(rad);
+      const pts = [[ax, -h / 2], [ax + w, -h / 2], [ax + w, h / 2], [ax, h / 2]].map(([x, y]) => [d.px + x * cs - y * sn, d.py + x * sn + y * cs]);
+      box(Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1])));
+    });
+
+    // 4b. Waagerechte Beschriftungen (wenige Geräte): beste freie Lage suchen
+    const hit = (r) => obs.reduce((n, o) => n + (r.x0 < o.x1 + 2 && r.x1 > o.x0 - 2 && r.y0 < o.y1 + 2 && r.y1 > o.y0 - 2 ? 1 : 0), 0);
+    [...m.devices]
+      .filter((d) => !d.hubRef.radial)
+      .sort((a, b) => a.hub.localeCompare(b.hub) || (a.a ?? 0) - (b.a ?? 0))
+      .forEach((d) => {
+        const ang = Math.atan2(d.py - d.hubRef.py, d.px - d.hubRef.px);
+        const c = Math.cos(ang);
+        const s = Math.sin(ang);
+        const { ip, w, h } = labelSize(d);
+        const below = 35;
+        const above = -(11 + h);
+        const C = (side, ox, oy) => ({ side, ox, oy });
+        const vert = s > 0 ? [C("middle", 0, below), C("middle", 0, above)] : [C("middle", 0, above), C("middle", 0, below)];
+        const rt = [C("start", 24, 2), C("start", 24, -14), C("start", 24, 18)];
+        const lf = [C("end", -24, 2), C("end", -24, -14), C("end", -24, 18)];
+        const cands =
+          c > 0.35 ? [rt[0], ...vert, lf[0], rt[1], rt[2], lf[1], lf[2]]
+          : c < -0.35 ? [lf[0], ...vert, rt[0], lf[1], lf[2], rt[1], rt[2]]
+          : [...vert, rt[0], lf[0], rt[1], lf[1], rt[2], lf[2]];
+        let best = null;
+        let bestN = Infinity;
+        for (const cd of cands) {
+          const x0 = cd.side === "start" ? d.px + cd.ox : cd.side === "end" ? d.px + cd.ox - w : d.px - w / 2;
+          const y0 = d.py + cd.oy - 12;
+          const rect = { x0, y0, x1: x0 + w, y1: y0 + h };
+          const n = hit(rect);
+          if (n < bestN) {
+            best = { cd, rect };
+            bestN = n;
+            if (n === 0) break;
+          }
+        }
+        d.lab = { mode: "flat", side: best.cd.side, ox: best.cd.ox, oy: best.cd.oy, ip, w, h };
+        obs.push(best.rect);
+      });
+
+    // 5. Zeichenfläche an den Inhalt anpassen (Koordinaten bleiben stabil, nur der Ausschnitt ändert sich)
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    obs.forEach((o) => {
+      x0 = Math.min(x0, o.x0);
+      y0 = Math.min(y0, o.y0);
+      x1 = Math.max(x1, o.x1);
+      y1 = Math.max(y1, o.y1);
+    });
+    const mg = 40;
+    let vx = x0 - mg;
+    let vy = y0 - mg;
+    let vw = x1 - x0 + 2 * mg;
+    let vh = y1 - y0 + 2 * mg;
+    if (vw < 1100) {
+      vx -= (1100 - vw) / 2;
+      vw = 1100;
+    }
+    if (vh < 640) {
+      vy -= (640 - vh) / 2;
+      vh = 640;
+    }
+    this._vb = { x: vx, y: vy, w: vw, h: vh };
   }
 
-  _pill(text, x, y, anchor) {
+  _radialPill(d, L) {
+    const max = this._config.max_name_length;
+    const t = d.name.length > max ? `${d.name.slice(0, max - 1)}…` : d.name;
+    const ax = L.side === "start" ? L.ox : L.ox - L.w;
+    const rot = L.rot.toFixed(1);
+    return `<g class="lab" data-lab="d:${esc(d.key)}" data-dx="0" data-dy="0" data-rot="${rot}" transform="translate(${d.px.toFixed(1)} ${d.py.toFixed(1)}) rotate(${rot})">
+      <rect class="pill" x="${ax}" y="${-L.h / 2}" width="${L.w}" height="${L.h}" rx="6" fill="rgba(8,16,40,.82)" stroke="rgba(130,160,255,.35)"/>
+      <text class="name" x="${ax + L.w / 2}" y="${L.ip ? -2 : 4}" text-anchor="middle" fill="#dfe8ff" font-size="12">${esc(t)}</text>
+      ${L.ip ? `<text class="ip" x="${ax + L.w / 2}" y="11" text-anchor="middle" fill="#8ea3d4" font-size="10">${esc(L.ip)}</text>` : ""}</g>`;
+  }
+
+  _pill(text, x, y, anchor, lab = "", ox = 0, oy = 0, ip = "") {
     const max = this._config.max_name_length;
     const t = text.length > max ? `${text.slice(0, max - 1)}…` : text;
-    const w = Math.round(t.length * 6.3 + 16);
+    const two = !!ip;
+    const w = Math.round(Math.max(t.length * 6.3, two ? ip.length * 5.6 : 0) + 16);
     const ax = anchor === "start" ? 0 : anchor === "end" ? -w : -w / 2;
-    return `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
-      <rect class="pill" x="${ax}" y="-10" width="${w}" height="20" rx="6" fill="rgba(8,16,40,.82)" stroke="rgba(130,160,255,.35)"/>
-      <text class="name" x="${ax + w / 2}" y="4" text-anchor="middle" fill="#dfe8ff" font-size="12">${esc(t)}</text></g>`;
+    const h = two ? 32 : 20;
+    return `<g class="lab" data-lab="${esc(lab)}" data-dx="${ox.toFixed(1)}" data-dy="${oy.toFixed(1)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
+      <rect class="pill" x="${ax}" y="-12" width="${w}" height="${h}" rx="6" fill="rgba(8,16,40,.82)" stroke="rgba(130,160,255,.35)"/>
+      <text class="name" x="${ax + w / 2}" y="2" text-anchor="middle" fill="#dfe8ff" font-size="12">${esc(t)}</text>
+      ${two ? `<text class="ip" x="${ax + w / 2}" y="15" text-anchor="middle" fill="#8ea3d4" font-size="10">${esc(ip)}</text>` : ""}</g>`;
   }
 
   _draw(m) {
     this._layout(m);
+    this._cur = {};
+    m.hubs.forEach((h) => (this._cur[`h:${h.id}`] = { x: h.px, y: h.py }));
+    m.devices.forEach((d) => (this._cur[`d:${d.key}`] = { x: d.px, y: d.py }));
     const main = m.hubs[0];
     const hubById = Object.fromEntries(m.hubs.map((h) => [h.id, h]));
     let links = "";
     let nodes = "";
     let labels = "";
 
-    const line = (x1, y1, x2, y2, color, online, width) =>
-      `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+    const line = (x1, y1, x2, y2, color, online, width, la = "", lb = "") =>
+      `<line data-a="${esc(la)}" data-b="${esc(lb)}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
         stroke="${online ? color : COLORS.offline}" stroke-width="${online ? width : 1.2}" stroke-linecap="round"
         ${online ? `class="flow" opacity=".85"` : `stroke-dasharray="2 6" opacity=".5"`}/>`;
 
-    const node = (x, y, icon, color, online, entity, r, extra = "", hubId = "", devKey = "") => `
-      <g class="node ${online ? "" : "off"} ${extra}" style="--c:${color}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"
+    const node = (x, y, icon, color, online, entity, r, extra = "", hubId = "", devKey = "", nid = "") => `
+      <g class="node ${online ? "" : "off"} ${extra}" style="--c:${color}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})" ${nid ? `data-node="${esc(nid)}"` : ""}
          ${hubId ? `data-hub="${esc(hubId)}" tabindex="0" role="button"` : devKey ? `data-dev="${esc(devKey)}" ${entity ? `data-entity="${esc(entity)}"` : ""} tabindex="0" role="button"` : entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
         <circle class="ring" r="${r}" fill="#0c1530" stroke="${color}" stroke-width="2"/>
         <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}"><div xmlns="http://www.w3.org/1999/xhtml"><ha-icon icon="${esc(icon)}"></ha-icon></div></foreignObject>
       </g>`;
 
     // Internet
-    const ix = 120;
-    const iy = 100;
-    links += line(ix, iy, main.px, main.py, COLORS.internet, m.internet.online, 2);
+    const ix = this._inet.px;
+    const iy = this._inet.py;
+    links += line(ix, iy, main.px, main.py, COLORS.internet, m.internet.online, 2, "i:net", `h:${main.id}`);
     nodes += node(ix, iy, "mdi:earth", m.internet.online ? COLORS.internet : COLORS.bad, true, m.internet.entity, 26);
     labels += `<text class="hubname" x="${ix + 38}" y="${iy + 5}" fill="#f4f7ff" font-size="14" font-weight="700">${m.internet.online ? "Internet online" : "Internet offline"}</text>`;
 
     // Verbindungen Hub -> Parent
     m.hubs.slice(1).forEach((h) => {
       const p = hubById[h.parent] || main;
-      links += line(p.px, p.py, h.px, h.py, COLORS[h.link] || COLORS.mesh, h.online, 3);
+      links += line(p.px, p.py, h.px, h.py, COLORS[h.link] || COLORS.mesh, h.online, 3, `h:${p.id}`, `h:${h.id}`);
     });
     // Geräte
     m.devices.forEach((d) => {
-      links += line(d.hubRef.px, d.hubRef.py, d.px, d.py, COLORS[d.connection] || COLORS.wlan, d.online, 1.6);
+      links += line(d.hubRef.px, d.hubRef.py, d.px, d.py, COLORS[d.connection] || COLORS.wlan, d.online, 1.6, `h:${d.hubRef.id}`, `d:${d.key}`);
     });
 
+    const showIp = this._config.show_ip !== false;
     m.hubs.forEach((h) => {
-      nodes += node(h.px, h.py, h.icon, h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, h.online, h.entity, h.main ? 32 : 26, "hub", h.links.length || h.entity ? h.id : "");
-      labels += `<text class="hubname" x="${h.px}" y="${h.py + (h.main ? 56 : 50)}" text-anchor="middle" fill="#f4f7ff" font-size="14" font-weight="700">${esc(h.name)}</text>
-        <text class="count" x="${h.px}" y="${h.py + (h.main ? 72 : 66)}" text-anchor="middle" fill="#8ea3d4" font-size="11">${esc(h.ssid ? `${h.ssid} · ` : "")}${h.count} Geräte</text>`;
+      nodes += node(h.px, h.py, h.icon, h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, h.online, h.entity, h.main ? 32 : 26, "hub", h.links.length || h.entity ? h.id : "", "", `h:${h.id}`);
+      const y0 = h.main ? 56 : 50;
+      labels += `<g class="lab" data-lab="h:${esc(h.id)}" data-dx="0" data-dy="0" transform="translate(${h.px.toFixed(1)} ${h.py.toFixed(1)})">
+        <text class="hubname" x="0" y="${y0}" text-anchor="middle" fill="#f4f7ff" font-size="14" font-weight="700">${esc(h.name)}</text>
+        <text class="count" x="0" y="${y0 + 16}" text-anchor="middle" fill="#8ea3d4" font-size="11">${esc(h.ssid ? `${h.ssid} · ` : "")}${h.count} Geräte</text>
+        ${showIp && h.ip ? `<text class="count" x="0" y="${y0 + 31}" text-anchor="middle" fill="#8ea3d4" font-size="10">${esc(h.ip)}</text>` : ""}</g>`;
     });
     m.devices.forEach((d) => {
       const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;
-      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17, d.lease ? "lease" : "", "", d.key);
-      const c = Math.cos(d.a);
-      const s = Math.sin(d.a);
-      const w = Math.min(d.name.length, this._config.max_name_length) * 6.3 + 16;
-      let side = c > 0.35 ? "start" : c < -0.35 ? "end" : "middle";
-      if (side === "start" && d.px + 24 + w > W - 6) side = "end";
-      else if (side === "end" && d.px - 24 - w < 6) side = "start";
-      if (side === "middle") labels += this._pill(d.name, d.px, d.py + (s > 0 ? 36 : -30), "middle");
-      else labels += this._pill(d.name, d.px + (side === "start" ? 24 : -24), d.py + 2, side);
+      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17, `${d.lease ? "lease " : ""}${d.hidden ? "hid" : ""}`, "", d.key, `d:${d.key}`);
+      const L = d.lab;
+      labels += L.mode === "radial" ? this._radialPill(d, L) : this._pill(d.name, d.px + L.ox, d.py + L.oy, L.side, `d:${d.key}`, L.ox, L.oy, L.ip);
     });
 
     const empty = m.devices.length
       ? ""
-      : `<text class="empty" x="${W / 2}" y="${H - 70}" text-anchor="middle" fill="#8ea3d4" font-size="15">Keine Geräte gefunden. Prüfe die FRITZ!Box-Tools-Integration oder trage Geräte unter „devices“ ein.</text>`;
+      : `<text class="empty" x="${this._vb.x + this._vb.w / 2}" y="${this._vb.y + this._vb.h - 60}" text-anchor="middle" fill="#8ea3d4" font-size="15">Keine Geräte gefunden. Prüfe die FRITZ!Box-Tools-Integration oder trage Geräte unter „devices“ ein.</text>`;
 
     const c = this._config;
     const chip = m.internet.online ? COLORS.internet : COLORS.bad;
@@ -845,9 +1192,18 @@ class NetzwerkKarte extends HTMLElement {
           <div class="v">${esc(t.value)}<span class="u">${esc(t.unit)}</span></div></div>`
       )
       .join("");
-    const legend = ["wlan", "lan", "mesh", "internet", "offline", ...(c.leases && c.leases.entity ? ["dhcp"] : [])]
-      .map((k) => `<span style="--c:${COLORS[k]}"><b></b>${LABELS[k]}</span>`)
-      .join("");
+    const chips = ["wlan", "lan", "mesh", "internet", "offline"].map((k) => `<span style="--c:${COLORS[k]}"><b></b>${LABELS[k]}</span>`);
+    if (c.leases && c.leases.entity) {
+      chips.push(
+        `<span data-toggle="leases" class="${m.leasesVisible ? "" : "inactive"}" style="--c:${COLORS.dhcp}" role="button" tabindex="0" title="Klicken zum Ein- oder Ausblenden"><b></b>${LABELS.dhcp} (${m.leaseCount})</span>`
+      );
+    }
+    if (m.hiddenCount) {
+      chips.push(
+        `<span data-toggle="hidden" class="${m.showHidden ? "" : "inactive"}" style="--c:${COLORS.offline}" role="button" tabindex="0" title="Einzeln ausgeblendete Geräte anzeigen"><b></b>Ausgeblendet (${m.hiddenCount})</span>`
+      );
+    }
+    const legend = `<span class="ver">v${VERSION}</span>${chips.join("")}`;
 
     this._root.innerHTML = `<style>${STYLE}</style>
       <ha-card>
@@ -858,10 +1214,11 @@ class NetzwerkKarte extends HTMLElement {
         </header>
         ${tiles ? `<div class="stats">${tiles}</div>` : ""}
         <div class="legend">${legend}</div>
-        <div class="wrap"><div class="scroll"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Netzwerk-Topologie">
+        <div class="wrap"><div class="scroll"><svg viewBox="${this._vb.x.toFixed(0)} ${this._vb.y.toFixed(0)} ${this._vb.w.toFixed(0)} ${this._vb.h.toFixed(0)}" role="img" aria-label="Netzwerk-Topologie">
           <g id="vp">${links}${nodes}${labels}${empty}</g></svg></div>
-          ${c.zoom === "off" ? "" : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Zurücksetzen">⟲</button></div>`}</div>
+          ${c.zoom === "off" ? "" : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Ansicht zurücksetzen">⟲</button>${c.drag_nodes === false ? "" : `<button data-zoom="layout" title="Gespeicherte Positionen zurücksetzen">▦</button>`}</div>`}</div>
       </ha-card>`;
+    this._indexEls();
     this._applyView();
   }
 }

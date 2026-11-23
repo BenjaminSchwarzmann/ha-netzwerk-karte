@@ -22,6 +22,10 @@ Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 - Ob ein Gerät per LAN oder WLAN verbunden ist, liefert die Integration nicht zuverlässig. Standard ist `default_connection` (WLAN). Abweichungen legst du unter `overrides` fest.
 - Es gibt keinen grafischen Editor, die Konfiguration erfolgt per YAML.
 
+## Prüfen, welche Version läuft
+
+Unten links in der Legende steht die Version der geladenen Karte (z. B. `v0.3.3`). Steht dort nichts oder eine ältere Nummer, wird noch eine zwischengespeicherte Datei benutzt. Dann in HACS *Erneut herunterladen* wählen, den Browser mit `Strg+F5` neu laden und in der Home-Assistant-App unter *Einstellungen → Companion-App → Fehlerbehebung → Frontend-Cache leeren* (je nach App-Version). Ein privates Browserfenster zeigt sofort, ob es am Cache liegt.
+
 ## Installation
 
 ### Über HACS (eigenes Repository)
@@ -38,10 +42,13 @@ Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 ## Bedienung
 
 - **Zoomen:** Mausrad über der Karte. Der Punkt unter dem Mauszeiger bleibt dabei stehen. Auf Wunsch nur mit Strg (`zoom: ctrl`), damit die Seite normal scrollt.
-- **Verschieben:** Mit gedrückter linker oder mittlerer Maustaste ziehen.
+- **Ansicht verschieben:** Auf dem Hintergrund mit gedrückter linker oder mittlerer Maustaste ziehen.
+- **Knoten verschieben:** Ein Gerät oder einen Router mit gedrückter linken Maustaste an die gewünschte Stelle ziehen. Linien und Beschriftung folgen sofort. Zieht man einen Router, wandern seine Geräte mit. Die Positionen bleiben gespeichert (siehe unten). Ein Doppelklick auf einen Knoten stellt seine Standardposition wieder her, die Schaltfläche ▦ setzt alle Positionen zurück. Mit `drag_nodes: false` ist das Verschieben abgeschaltet.
 - **Zurücksetzen:** Doppelklick auf den Hintergrund oder die Schaltfläche ⟲. Die Schaltflächen + und − helfen auch auf Touchgeräten.
 - **Gerät anklicken:** Es öffnet sich ein Infofenster mit Status, IP- und MAC-Adresse, Hostname, Router, Verbindungsart, Entität, letzter Änderung und allen weiteren Attributen des Trackers. Dort gibt es die Schaltflächen *Umbenennen* und *Entität öffnen*. Mit `device_click: more-info` öffnet stattdessen direkt der Home-Assistant-Dialog.
 - **Gerät umbenennen:** Rechtsklick auf das Gerät (oder *Umbenennen* im Infofenster, auch auf Touchgeräten). Name eintragen, mit Enter bestätigen. *Zurücksetzen* stellt den Originalnamen wieder her.
+- **Geräte ausblenden:** Im Infofenster *Ausblenden* wählen. Ausgeblendete Geräte erscheinen nicht mehr. Unten rechts in der Legende zeigt der Eintrag *Ausgeblendet (n)* ihre Anzahl, ein Klick darauf blendet sie gedimmt wieder ein, im Infofenster dann *Einblenden*.
+- **DHCP-Leases ein- und ausblenden:** Klick auf *Nur DHCP-Lease (n)* in der Legende. Die Einstellung wird gespeichert. Mit `leases.show: false` sind sie von Anfang an ausgeblendet.
 - **Router anklicken:** Hat ein Knoten einen Link, öffnet sich die Weboberfläche in einem neuen Fenster. Bei mehreren Zielen erscheint ein kleines Menü. Normale Geräte öffnen den Entitätsdialog.
 
 ## OPNsense-DHCP-Leases abgleichen
@@ -101,6 +108,16 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 - Die Karte liest die Felder `address`, `hwaddr`, `hostname`, `state` und `if_descr`/`if_name` der Kea-Antwort. Stehen sie in deinem Sensor anders, nenne sie mir oder passe `leaseFields` in der JavaScript-Datei an.
 - Nur DHCPv4 über Kea ist vorgesehen.
 
+## Layout
+
+Die Zeichenfläche passt sich dem Inhalt an. Router mit vielen Geräten (mehr als 10) bekommen einen größeren Ring, und die Beschriftungen laufen **radial** längs der Verbindungslinie nach außen. So überlappen sie sich nicht. Bei wenigen Geräten stehen die Beschriftungen waagerecht neben dem Knoten, mit automatischer Suche nach einem freien Platz. Router-Gruppen werden automatisch so weit auseinander gesetzt, dass sie sich nicht überdecken. Der Internet-Knoten sitzt über dem Hauptknoten.
+
+Mit `label_mode: radial` oder `label_mode: horizontal` erzwingst du eine Darstellung für alle Router. Router, die du per `x`/`y` in Prozent festlegst oder per Maus verschiebst, bleiben an ihrem Platz.
+
+## Gespeicherte Positionen
+
+Verschobene Knoten, ausgeblendete Geräte und die Lease-Einstellung merkt sich die Karte wie die eigenen Namen in den Benutzerdaten von Home Assistant (Schlüssel `netzwerk-karte-positionen`) und zusätzlich im Browser. Geräte werden relativ zu ihrem Router gespeichert. Verschiebst du den Router, folgen deshalb auch Geräte mit gespeicherter Position. Neue Geräte ordnet die Karte weiterhin automatisch an. Das Verschieben funktioniert mit der Maus, nicht per Touch.
+
 ## Eigene Gerätenamen
 
 Namen, die du per Rechtsklick vergibst, werden **an die MAC-Adresse des Geräts gebunden** (bei Geräten ohne MAC an die Entity-ID). Sie bleiben deshalb nach einem Neustart, bei neuer IP-Adresse oder geändertem Hostnamen erhalten.
@@ -119,7 +136,10 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `internet_entity` | – | Entität für den Internet-Status (`on` = online) |
 | `main` | `Router`, x 50, y 34 | Hauptknoten in der Mitte: `name`, `x`, `y`, `icon`, `entity`, `subnet` |
 | `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `url`, `gateway`, `links`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
-| `leases` | – | OPNsense-DHCP-Leases abgleichen: `entity`, `attribute` (Standard `rows`), `include`, `exclude` |
+| `leases` | – | OPNsense-DHCP-Leases abgleichen: `entity`, `attribute` (Standard `rows`), `include`, `exclude`, `show` (`false` = zunächst ausgeblendet) |
+| `show_ip` | `true` | IP-Adresse unter dem Namen von Geräten und Routern anzeigen |
+| `drag_nodes` | `true` | Knoten per Maus verschiebbar |
+| `label_mode` | `auto` | `auto`, `radial` (gedrehte Beschriftung) oder `horizontal` |
 | `device_click` | `info` | Klick auf ein Gerät: `info` (Infofenster) oder `more-info` (Home-Assistant-Dialog) |
 | `zoom` | `wheel` | Zoom per Mausrad (`wheel`), nur mit gedrückter Strg-Taste (`ctrl`) oder aus (`off`) |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
@@ -147,13 +167,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.5.0"
+git commit -m "Netzwerk-Karte 0.3.3"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.5.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.3`), damit Updates erkannt werden.
 
 ## Lizenz
 

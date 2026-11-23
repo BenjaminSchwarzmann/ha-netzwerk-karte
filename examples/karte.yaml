@@ -59,6 +59,7 @@ exclude:
 # OPNsense-DHCP-Leases abgleichen (Sensor siehe README):
 # leases:
 #   entity: sensor.opnsense_dhcp_leases
+#   show: true                 # false = zunächst ausgeblendet, Klick auf die Legende blendet ein
 #   exclude:
 #     - "^esp"
 
