@@ -44,6 +44,63 @@ Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 - **Gerät umbenennen:** Rechtsklick auf das Gerät (oder *Umbenennen* im Infofenster, auch auf Touchgeräten). Name eintragen, mit Enter bestätigen. *Zurücksetzen* stellt den Originalnamen wieder her.
 - **Router anklicken:** Hat ein Knoten einen Link, öffnet sich die Weboberfläche in einem neuen Fenster. Bei mehreren Zielen erscheint ein kleines Menü. Normale Geräte öffnen den Entitätsdialog.
 
+## OPNsense-DHCP-Leases abgleichen
+
+Clients, die zwar eine DHCP-Adresse von OPNsense (Kea) haben, aber von keinem Tracker gemeldet werden, erscheinen zusätzlich **orange mit gestricheltem Ring** (Legende: *Nur DHCP-Lease*). Sie werden anhand ihrer IP dem passenden Router-Knoten zugeordnet. Geräte, die schon über einen Tracker bekannt sind (Abgleich über MAC oder IP), werden nicht doppelt angezeigt. Ihr Infofenster zeigt dann zusätzlich die Lease-Daten. Die Router selbst (`ip`/`mac` unter `hubs`) werden ausgeblendet, ebenso abgelaufene oder abgelehnte Leases.
+
+Die Karte kann OPNsense nicht direkt abfragen (Browser, Zugangsdaten). Deshalb liest Home Assistant die Leases in einen Sensor, und die Karte wertet dessen Attribut aus.
+
+**1. API-Schlüssel in OPNsense anlegen**
+*System → Zugang → Benutzer* → einen eigenen Benutzer für Home Assistant anlegen (nicht root), ihm nur die Berechtigung für die Kea-DHCP-Leases geben, dann beim Benutzer unter *API-Schlüssel* **+** klicken. Die heruntergeladene Datei enthält `key` und `secret`.
+
+**2. Zugangsdaten in `secrets.yaml`**
+```yaml
+opnsense_api_key: "DEIN_KEY"
+opnsense_api_secret: "DEIN_SECRET"
+```
+
+**3. Sensor in `configuration.yaml`**
+```yaml
+rest:
+  - resource: https://192.168.4.1/api/kea/leases4/search
+    method: POST
+    verify_ssl: false            # bei selbstsigniertem Zertifikat
+    authentication: basic
+    username: !secret opnsense_api_key
+    password: !secret opnsense_api_secret
+    headers:
+      Content-Type: application/json
+    payload: '{"current": 1, "rowCount": 1000}'
+    scan_interval: 60            # Sekunden: so schnell erscheinen Änderungen in der Karte
+    timeout: 20
+    sensor:
+      - name: OPNsense DHCP Leases
+        unique_id: opnsense_dhcp_leases
+        value_template: "{{ value_json.total | int(0) }}"
+        json_attributes:
+          - rows
+
+recorder:
+  exclude:
+    entities:
+      - sensor.opnsense_dhcp_leases   # große Attribute gehören nicht in die Datenbank
+```
+Läuft die OPNsense-Oberfläche ohne TLS, nimm `http://` statt `https://`. Nach dem Eintragen die Konfiguration prüfen und Home Assistant neu starten. Unter *Entwicklerwerkzeuge → Zustände* sollte `sensor.opnsense_dhcp_leases` die Anzahl der Leases zeigen und im Attribut `rows` die einzelnen Einträge.
+
+**4. In der Karte aktivieren**
+```yaml
+leases:
+  entity: sensor.opnsense_dhcp_leases
+  exclude:                       # optional, reguläre Ausdrücke auf Hostname, IP oder MAC
+    - "^esp"
+```
+Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alternativ trägst du beim Hub den OPNsense-Schnittstellennamen unter `match` ein (z. B. `match: OG_WLAN3`).
+
+**Hinweise**
+- Ein Lease bedeutet nicht, dass das Gerät gerade online ist. Er zeigt nur, dass es eine Adresse bekommen hat und sie noch gültig ist.
+- Die Karte liest die Felder `address`, `hwaddr`, `hostname`, `state` und `if_descr`/`if_name` der Kea-Antwort. Stehen sie in deinem Sensor anders, nenne sie mir oder passe `leaseFields` in der JavaScript-Datei an.
+- Nur DHCPv4 über Kea ist vorgesehen.
+
 ## Eigene Gerätenamen
 
 Namen, die du per Rechtsklick vergibst, werden **an die MAC-Adresse des Geräts gebunden** (bei Geräten ohne MAC an die Entity-ID). Sie bleiben deshalb nach einem Neustart, bei neuer IP-Adresse oder geändertem Hostnamen erhalten.
@@ -62,6 +119,7 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `internet_entity` | – | Entität für den Internet-Status (`on` = online) |
 | `main` | `Router`, x 50, y 34 | Hauptknoten in der Mitte: `name`, `x`, `y`, `icon`, `entity`, `subnet` |
 | `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `url`, `gateway`, `links`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
+| `leases` | – | OPNsense-DHCP-Leases abgleichen: `entity`, `attribute` (Standard `rows`), `include`, `exclude` |
 | `device_click` | `info` | Klick auf ein Gerät: `info` (Infofenster) oder `more-info` (Home-Assistant-Dialog) |
 | `zoom` | `wheel` | Zoom per Mausrad (`wheel`), nur mit gedrückter Strg-Taste (`ctrl`) oder aus (`off`) |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
@@ -89,13 +147,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.4.0"
+git commit -m "Netzwerk-Karte 0.5.0"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.5.0`), damit Updates erkannt werden.
 
 ## Lizenz
 

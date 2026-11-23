@@ -56,6 +56,12 @@ overrides:
 exclude:
   - "^PC-[0-9A-F]{2}-"
 
+# OPNsense-DHCP-Leases abgleichen (Sensor siehe README):
+# leases:
+#   entity: sensor.opnsense_dhcp_leases
+#   exclude:
+#     - "^esp"
+
 stats:
   - entity: sensor.fritz_box_6490_download_durchsatz
     name: Download

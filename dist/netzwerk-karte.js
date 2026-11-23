@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.4.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.4.0";
+/*! netzwerk-karte 0.5.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.5.0";
 const NAMES_KEY = "netzwerk-karte-namen";
 const W = 1500;
 const H = 880;
@@ -9,9 +9,10 @@ const COLORS = {
   mesh: "#a46bff",
   internet: "#33f0a8",
   offline: "#5b6478",
+  dhcp: "#ff9f43",
   bad: "#ff6b81",
 };
-const LABELS = { wlan: "WLAN", lan: "LAN", mesh: "Mesh", internet: "Internet", offline: "Offline" };
+const LABELS = { wlan: "WLAN", lan: "LAN", mesh: "Mesh", internet: "Internet", offline: "Offline", dhcp: "Nur DHCP-Lease" };
 const OFFLINE = ["off", "not_home", "unavailable", "unknown", "disconnected", "false", "none"];
 const PRESETS = [[22, 50], [78, 50], [50, 80], [22, 84], [78, 84], [50, 12]];
 const ICONS = [
@@ -73,6 +74,16 @@ const inCidr = (ip, [base, l]) => {
   const size = 2 ** (32 - l);
   return Math.floor(a / size) === Math.floor(base / size);
 };
+const leaseFields = (r) => {
+  const st = r.state;
+  return {
+    ip: String(r.address || r.ip || r["ip-address"] || ""),
+    mac: normMac(r.hwaddr || r.mac || r["hw-address"] || ""),
+    host: String(r.hostname || "").replace(/\.$/, ""),
+    iface: r.if_descr || r.if_name || r.interface || "",
+    active: st == null || st === 0 || st === "0" || /^(default|assigned)$/i.test(String(st)),
+  };
+};
 const normMac = (m) => (m ? String(m).toLowerCase().replace(/-/g, ":") : "");
 
 const STYLE = `
@@ -131,6 +142,7 @@ const STYLE = `
   .node circle.ring { filter: drop-shadow(0 0 6px var(--c)); transition: transform .15s; transform-box: fill-box; transform-origin: center; }
   .node:hover circle.ring, .node:focus-visible circle.ring { transform: scale(1.12); }
   .node.off { opacity: .55; }
+  .node.lease circle.ring { stroke-dasharray: 5 3; }
   .node foreignObject div { display: grid; place-items: center; width: 100%; height: 100%; color: var(--c); }
   .node ha-icon { --mdc-icon-size: 20px; }
   .node.hub ha-icon { --mdc-icon-size: 30px; }
@@ -411,7 +423,7 @@ class NetzwerkKarte extends HTMLElement {
       ["Verbindung", LABELS[d.connection] || d.connection],
       ["Zugangspunkt laut Router", a.connected_to || ""],
       ["Ursprünglicher Name", d.custom ? d.orig : ""],
-      ["Quelle", a.source_type || ""],
+      ["Quelle", a.source_type || (d.lease ? "OPNsense DHCP-Lease" : "")],
       ["Entität", d.entity],
       ["Zuletzt geändert", st && st.last_changed ? new Date(st.last_changed).toLocaleString(lang) : ""],
     ].filter((r) => r[1] !== "" && r[1] != null);
@@ -419,9 +431,30 @@ class NetzwerkKarte extends HTMLElement {
     const extra = Object.entries(a)
       .filter(([k, v]) => !skip.includes(k) && v !== "" && v != null)
       .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)]);
+    const lr = this._config.leases && this._config.leases.entity
+      ? this._leaseRows().find((r) => {
+          const f = leaseFields(r);
+          return (d.mac && f.mac === d.mac) || (d.ip && f.ip === d.ip);
+        })
+      : null;
+    const fmt = (k, v) => {
+      if (Array.isArray(v)) return v.join(", ");
+      if (typeof v === "object") return JSON.stringify(v);
+      if (/expir|cltt|^expire$/i.test(k) && Number(v) > 1e9) return new Date(Number(v) * 1000).toLocaleString(lang);
+      return String(v);
+    };
+    const leaseRows = lr
+      ? [
+          ["Lease-Typ", Array.isArray(lr.is_reserved) && lr.is_reserved.length ? "Statisch (Reservierung)" : "Dynamisch"],
+          ...Object.entries(lr)
+            .filter(([k, v]) => k !== "is_reserved" && v !== "" && v != null && !(Array.isArray(v) && !v.length))
+            .map(([k, v]) => [k, fmt(k, v)]),
+        ]
+      : [];
     const table = (r) => `<table>${r.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>`;
     const html = `<div class="mh">${esc(d.name)}</div>${table(rows)}
       ${extra.length ? `<table><tr class="sep"><td colspan="2">WEITERE ATTRIBUTE</td></tr>${extra.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
+      ${leaseRows.length ? `<table><tr class="sep"><td colspan="2">DHCP-LEASE (OPNSENSE)</td></tr>${leaseRows.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
       <div class="row"><button data-act="rename">Umbenennen</button>${d.entity ? `<button data-act="more" data-entity="${esc(d.entity)}">Entität öffnen</button>` : ""}</div>`;
     this._showMenu(html, el, "info", d.key);
   }
@@ -507,6 +540,12 @@ class NetzwerkKarte extends HTMLElement {
     this._key = key;
     this._m = model;
     this._draw(model);
+  }
+
+  _leaseRows() {
+    const lc = this._config.leases;
+    const a = lc && lc.entity ? this._hass.states[lc.entity]?.attributes?.[lc.attribute || "rows"] : null;
+    return Array.isArray(a) ? a : [];
   }
 
   _model() {
@@ -626,6 +665,36 @@ class NetzwerkKarte extends HTMLElement {
         online: d.entity ? isOnline(s?.state) : true, icon: d.icon || iconFor(name),
       });
     });
+    // DHCP-Leases aus OPNsense (Kea): Clients ohne passenden Tracker zusätzlich anzeigen
+    const lc = c.leases && c.leases.entity ? c.leases : null;
+    if (lc) {
+      const lincl = list(lc.include).map((r) => new RegExp(r, "i"));
+      const lexcl = list(lc.exclude).map((r) => new RegExp(r, "i"));
+      const known = new Set();
+      for (const d of devs.values()) {
+        if (d.mac) known.add(d.mac);
+        if (d.ip) known.add(d.ip);
+      }
+      const seen = new Set();
+      for (const r of this._leaseRows()) {
+        const f = leaseFields(r);
+        if (!f.active || (!f.ip && !f.mac)) continue;
+        if ((f.ip && hubIps.has(f.ip)) || (f.mac && hubMacs.has(f.mac))) continue;
+        if ((f.mac && known.has(f.mac)) || (f.ip && known.has(f.ip))) continue;
+        const key = f.mac || `lease:${f.ip}`;
+        const custom = this._names[key] || "";
+        const hay = `${f.host} ${f.ip} ${f.mac}`;
+        if (lincl.length && !lincl.some((x) => x.test(hay))) continue;
+        if (lexcl.some((x) => x.test(hay)) && !custom) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        devs.set(key, {
+          entity: "", key, orig: f.host || f.mac || f.ip, custom: !!custom, ip: f.ip, mac: f.mac,
+          name: custom || f.host || f.mac || f.ip, hub: assign(null, f.ip, f.iface).id,
+          connection: "dhcp", online: true, icon: iconFor(f.host), lease: true,
+        });
+      }
+    }
     const devices = [...devs.values()].sort((a, b) => a.hub.localeCompare(b.hub) || a.name.localeCompare(b.name));
 
     const stats = c.stats.map((t) => {
@@ -752,7 +821,7 @@ class NetzwerkKarte extends HTMLElement {
     });
     m.devices.forEach((d) => {
       const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;
-      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17, "", "", d.key);
+      nodes += node(d.px, d.py, d.icon, color, d.online, d.entity, 17, d.lease ? "lease" : "", "", d.key);
       const c = Math.cos(d.a);
       const s = Math.sin(d.a);
       const w = Math.min(d.name.length, this._config.max_name_length) * 6.3 + 16;
@@ -776,7 +845,7 @@ class NetzwerkKarte extends HTMLElement {
           <div class="v">${esc(t.value)}<span class="u">${esc(t.unit)}</span></div></div>`
       )
       .join("");
-    const legend = ["wlan", "lan", "mesh", "internet", "offline"]
+    const legend = ["wlan", "lan", "mesh", "internet", "offline", ...(c.leases && c.leases.entity ? ["dhcp"] : [])]
       .map((k) => `<span style="--c:${COLORS[k]}"><b></b>${LABELS[k]}</span>`)
       .join("");
 
