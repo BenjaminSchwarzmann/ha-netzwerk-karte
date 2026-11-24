@@ -108,6 +108,20 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 - Die Karte liest die Felder `address`, `hwaddr`, `hostname`, `state` und `if_descr`/`if_name` der Kea-Antwort. Stehen sie in deinem Sensor anders, nenne sie mir oder passe `leaseFields` in der JavaScript-Datei an.
 - Nur DHCPv4 über Kea ist vorgesehen.
 
+## 3D-Ansicht
+
+Mit dem Umschalter **2D | 3D** neben dem Titel wechselst du zwischen der flachen Darstellung und einer räumlichen Ansicht. Die Wahl wird pro Benutzer gespeichert. Mit `view: 3d` startet die Karte standardmäßig räumlich.
+
+- **Drehen und neigen:** Rechte Maustaste gedrückt halten und ziehen. Der Mittelpunkt der Drehung ist der Hauptknoten (z. B. OPNsense).
+- **Zoomen:** Mausrad (oder `+` und `−`). **Verschieben:** linke oder mittlere Maustaste ziehen.
+- **Zurücksetzen:** Doppelklick auf den leeren Hintergrund oder ⟲.
+- **Beschriftungen:** Router sind immer beschriftet, bei Geräten nur die der Kamera nächsten und das Gerät unter dem Mauszeiger. Die Schaltfläche **Aa** schaltet zwischen *wenige*, *mehr* und *alle* um.
+- **Klicken:** Wie in 2D öffnet ein Klick auf ein Gerät das Infofenster und ein Klick auf einen Router sein Link-Menü. Ein Rechtsklick **ohne Ziehen** auf ein Gerät öffnet das Umbenennen.
+- **Anordnung:** Die Router liegen wie in 2D, mit leichtem Höhenunterschied. Die Geräte sitzen auf einer abgeflachten Kugelschale um ihren Router. Die Lage wird aus dem Gerät berechnet und bleibt beim Umbenennen gleich. Einzelne Knoten lassen sich in 3D nicht verschieben, dafür gibt es die 2D-Ansicht.
+- **Ausblenden, Leases, Namen:** Alles funktioniert wie in 2D, ebenso die Legende.
+
+Die 3D-Ansicht braucht keine zusätzliche Bibliothek. Sie funktioniert nur mit der Maus, nicht per Touch. Auf schwachen Geräten kann das Drehen bei sehr vielen Knoten ruckeln.
+
 ## Layout
 
 Die Zeichenfläche passt sich dem Inhalt an. Router mit vielen Geräten (mehr als 10) bekommen einen größeren Ring, und die Beschriftungen laufen **radial** längs der Verbindungslinie nach außen. So überlappen sie sich nicht. Bei wenigen Geräten stehen die Beschriftungen waagerecht neben dem Knoten, mit automatischer Suche nach einem freien Platz. Router-Gruppen werden automatisch so weit auseinander gesetzt, dass sie sich nicht überdecken. Der Internet-Knoten sitzt über dem Hauptknoten.
@@ -140,6 +154,7 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `show_ip` | `true` | IP-Adresse unter dem Namen von Geräten und Routern anzeigen |
 | `drag_nodes` | `true` | Knoten per Maus verschiebbar |
 | `label_mode` | `auto` | `auto`, `radial` (gedrehte Beschriftung) oder `horizontal` |
+| `view` | `2d` | Startansicht: `2d` oder `3d` (der Umschalter in der Karte hat danach Vorrang) |
 | `device_click` | `info` | Klick auf ein Gerät: `info` (Infofenster) oder `more-info` (Home-Assistant-Dialog) |
 | `zoom` | `wheel` | Zoom per Mausrad (`wheel`), nur mit gedrückter Strg-Taste (`ctrl`) oder aus (`off`) |
 | `auto_discover` | `true` | Geräte automatisch aus `device_tracker` mit `connected_to` übernehmen |
@@ -167,13 +182,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.3.3"
+git commit -m "Netzwerk-Karte 0.3.4"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.3`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.4`), damit Updates erkannt werden.
 
 ## Lizenz
 

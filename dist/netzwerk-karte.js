@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.3.3 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.3.3";
+/*! netzwerk-karte 0.3.4 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.3.4";
 const NAMES_KEY = "netzwerk-karte-namen";
 const POS_KEY = "netzwerk-karte-positionen";
 const OPT_KEY = "netzwerk-karte-optionen";
@@ -36,6 +36,10 @@ const ICONS = [
   [/saug|roborock|roomba/i, "mdi:robot-vacuum"],
 ];
 
+const hexA = (hex, a) => {
+  const n = parseInt(String(hex).slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -147,6 +151,12 @@ const STYLE = `
   .node.lease circle.ring { stroke-dasharray: 5 3; }
   .node.hid { opacity: .4; }
   .legend .ver { margin-right: auto; opacity: .55; }
+  .mode { display: inline-flex; padding: 3px; border-radius: 999px; background: rgba(12,26,60,.9); border: 1px solid rgba(90,140,255,.35); }
+  .mode button { border: 0; background: none; color: #a0b9eb; font: 600 13px inherit; padding: 6px 16px; border-radius: 999px; cursor: pointer; }
+  .mode button.on { background: ${COLORS.wlan}; color: #06102a; }
+  .stage3d { position: relative; width: 100%; aspect-ratio: 1.8 / 1; min-height: 380px; }
+  .stage3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
+  .stage3d.drag canvas { cursor: grabbing; }
   .legend [data-toggle] { cursor: pointer; padding: 2px 10px; border: 1px solid rgba(90,140,255,.3); border-radius: 999px; }
   .legend [data-toggle]:hover { border-color: var(--c); }
   .legend [data-toggle].inactive { opacity: .55; text-decoration: line-through; }
@@ -179,6 +189,10 @@ class NetzwerkKarte extends HTMLElement {
     this._inet = { px: 750, py: 70 };
     this._cur = {};
     this._els = {};
+    this._cam = { yaw: -24, pitch: 17, k: 1, px: 0, py: 0, lab: 0 };
+    this._d3 = null;
+    this._hov = "";
+    this._scr = [];
     this._pending = false;
     const r = this._root;
     r.addEventListener("click", (e) => this._onClick(e));
@@ -189,9 +203,13 @@ class NetzwerkKarte extends HTMLElement {
         return;
       }
       if (e.key === "Escape") this._closeMenu();
-      else if (e.key === "Enter" || e.key === " ") this._onClick(e);
+      else if ((e.key === "Enter" || e.key === " ") && !(e.target && e.target.tagName === "BUTTON")) this._onClick(e);
     });
     r.addEventListener("contextmenu", (e) => {
+      if (e.target.closest && e.target.closest(".stage3d")) {
+        e.preventDefault(); // Rechtsklick dreht in 3D, das Umbenennen läuft über pointerup
+        return;
+      }
       const n = e.target.closest ? e.target.closest("[data-dev]") : null;
       if (!n) return;
       e.preventDefault();
@@ -201,6 +219,15 @@ class NetzwerkKarte extends HTMLElement {
       "wheel",
       (e) => {
         if (!this._config || this._config.zoom === "off") return;
+        const st = e.target.closest ? e.target.closest(".stage3d") : null;
+        if (st) {
+          if (this._config.zoom === "ctrl" && !e.ctrlKey) return;
+          e.preventDefault();
+          const dy3 = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+          this._cam.k = clamp(this._cam.k * Math.exp(-dy3 * 0.0015), 0.35, 5);
+          this._req3d();
+          return;
+        }
         const sc = e.target.closest ? e.target.closest(".scroll") : null;
         if (!sc || (this._config.zoom === "ctrl" && !e.ctrlKey)) return;
         e.preventDefault();
@@ -212,9 +239,10 @@ class NetzwerkKarte extends HTMLElement {
       { passive: false }
     );
     r.addEventListener("mousedown", (e) => {
-      if (e.button === 1 && e.target.closest && e.target.closest(".scroll")) e.preventDefault();
+      if (e.button === 1 && e.target.closest && (e.target.closest(".scroll") || e.target.closest(".stage3d"))) e.preventDefault();
     });
     r.addEventListener("pointerdown", (e) => {
+      if (e.target.closest && e.target.closest(".stage3d")) return this._p3down(e);
       if (e.pointerType !== "mouse" || (e.button !== 0 && e.button !== 1)) return;
       const t = e.target;
       const sc = t.closest ? t.closest(".scroll") : null;
@@ -237,6 +265,8 @@ class NetzwerkKarte extends HTMLElement {
       }
     });
     r.addEventListener("pointermove", (e) => {
+      if (this._d3) return this._p3move(e);
+      if (e.buttons === 0 && e.target.closest && e.target.closest(".stage3d")) return this._hover3(e);
       const d = this._drag;
       if (!d || e.pointerId !== d.id) return;
       if (e.buttons === 0) return this._endDrag(); // Taste wurde außerhalb losgelassen
@@ -267,10 +297,21 @@ class NetzwerkKarte extends HTMLElement {
       this._view.y = d.vy + (dy * vb.h) / rect.height;
       this._applyView();
     });
-    r.addEventListener("pointerup", () => this._endDrag());
-    r.addEventListener("pointercancel", () => this._endDrag());
+    r.addEventListener("pointerup", (e) => {
+      this._endDrag();
+      this._endDrag3(e);
+    });
+    r.addEventListener("pointercancel", (e) => {
+      this._endDrag();
+      this._endDrag3(e, true);
+    });
     r.addEventListener("dblclick", (e) => {
       const t = e.target;
+      if (t.closest && t.closest(".stage3d")) {
+        const rc = this._cv.getBoundingClientRect();
+        if (!this._pick(e.clientX - rc.left, e.clientY - rc.top)) this._zoomBy("reset");
+        return;
+      }
       if (!t.closest || !t.closest(".scroll")) return;
       const ne = t.closest("[data-node]");
       if (ne) this._persist(POS_KEY, "_pos", ne.dataset.node, null); // Position dieses Knotens zurücksetzen
@@ -475,6 +516,10 @@ class NetzwerkKarte extends HTMLElement {
     if (z) return this._zoomBy(z.dataset.zoom);
     const tg = t.closest("[data-toggle]");
     if (tg) return this._toggle(tg.dataset.toggle);
+    const md = t.closest("[data-mode]");
+    if (md) return this._setMode(md.dataset.mode);
+    const cv = t.closest("canvas.c3d");
+    if (cv) return this._click3d(e, cv);
     const menu = t.closest(".menu");
     if (menu) {
       const b = t.closest("[data-act]");
@@ -605,7 +650,7 @@ class NetzwerkKarte extends HTMLElement {
 
   _openRename(key) {
     const d = this._m && this._m.devices.find((x) => x.key === key);
-    const el = this._devEl(key);
+    const el = this._devEl(key) || this._anchor3d(this._scr.find((q) => q.key === key));
     if (!d || !el) return;
     const menu = this._showMenu(
       `<div class="mh">NAME ÄNDERN</div>${d.custom ? `<div class="mh2">Original: ${esc(d.orig)}</div>` : ""}
@@ -649,6 +694,513 @@ class NetzwerkKarte extends HTMLElement {
     }
   }
 
+  // ---------- 3D-Ansicht (Canvas) ----------
+  _is3d() {
+    return (this._opts.mode || (this._config && this._config.view) || "2d") === "3d";
+  }
+
+  _setMode(mode) {
+    if (mode === "2d" || mode === "3d") this._persist(OPT_KEY, "_opts", "mode", mode);
+  }
+
+  // Räumliche Anordnung: Router liegen an den Stellen der 2D-Ansicht (mit etwas Höhenunterschied),
+  // die Geräte auf einer abgeflachten Kugelschale um ihren Router. Alles ist stabil aus Namen berechnet.
+  _build3d(m) {
+    const MAIN = m.hubs[0];
+    const hubById = Object.fromEntries(m.hubs.map((h) => [h.id, h]));
+    const hash = (str) => {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return ((h >>> 0) % 100000) / 100000;
+    };
+    const nodes = [];
+    const links = [];
+    const hub3 = {};
+    m.hubs.forEach((h) => {
+      const p = [h.px - MAIN.px, h.main ? 0 : (hash(`y${h.id}`) - 0.5) * 240, h.py - MAIN.py];
+      hub3[h.id] = p;
+      nodes.push({
+        id: `h:${h.id}`, kind: h.main ? "main" : "hub", hubId: h.id, p, r: h.main ? 22 : 16,
+        color: h.main ? COLORS.wlan : COLORS[h.link] || COLORS.mesh, online: h.online, name: h.name,
+        sub: `${h.ssid ? `${h.ssid} · ` : ""}${h.count} Geräte`, ip: h.ip || "",
+        shell: h.ring.n ? clamp(h.ring.r * 0.9 + 40, 90, 420) : 0, entity: h.entity || "",
+      });
+      if (!h.main) {
+        const par = hubById[h.parent] || MAIN;
+        links.push({ a: `h:${par.id}`, b: `h:${h.id}`, color: COLORS[h.link] || COLORS.mesh, w: 2.6, online: h.online });
+      }
+    });
+    const by = {};
+    m.devices.forEach((d) => (by[d.hub] = by[d.hub] || []).push(d));
+    m.hubs.forEach((h) => {
+      const ds = (by[h.id] || []).slice().sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const n = ds.length;
+      const R3 = clamp(h.ring.r * 0.9 + 40, 90, 420);
+      const phase = hash(`p${h.id}`) * 6.2832;
+      ds.forEach((d, i) => {
+        const y = 1 - (2 * (i + 0.5)) / n;
+        const rad = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = phase + i * 2.399963;
+        const j = 0.82 + 0.34 * hash(`j${d.key}`);
+        const hp = hub3[h.id];
+        const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;
+        nodes.push({
+          id: `d:${d.key}`, kind: "dev", key: d.key, hubId: h.id, r: 8.5, color, online: d.online,
+          lease: !!d.lease, hidden: !!d.hidden, name: d.name, ip: d.ip || "", entity: d.entity,
+          p: [hp[0] + Math.cos(th) * rad * R3 * j, hp[1] + y * R3 * 0.62 * j, hp[2] + Math.sin(th) * rad * R3 * j],
+        });
+        links.push({ a: `h:${h.id}`, b: `d:${d.key}`, color, w: 1, online: d.online });
+      });
+    });
+    nodes.push({
+      id: "i:net", kind: "inet", p: [-120, 330, -110], r: 24, color: m.internet.online ? COLORS.internet : COLORS.bad, online: true,
+      name: m.internet.online ? "Internet online" : "Internet offline", entity: m.internet.entity,
+    });
+    links.push({ a: "i:net", b: `h:${MAIN.id}`, color: COLORS.internet, w: 1.6, online: m.internet.online });
+    const R = Math.max(500, ...nodes.map((q) => Math.hypot(q.p[0], q.p[1], q.p[2]))) + 60;
+    return { nodes, links, R };
+  }
+
+  _init3d() {
+    const cv = this._root.querySelector("canvas.c3d");
+    this._cv = cv;
+    this._scr = [];
+    if (!cv || !this._m) return;
+    this._scene = this._build3d(this._m);
+    if (this._ro) this._ro.disconnect();
+    if (typeof ResizeObserver !== "undefined") {
+      this._ro = new ResizeObserver(() => this._req3d());
+      this._ro.observe(cv.parentElement);
+    }
+    this._render3d();
+  }
+
+  _req3d() {
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => {
+      this._raf = 0;
+      this._render3d();
+    });
+  }
+
+  _sprite(color) {
+    this._sprites = this._sprites || {};
+    if (this._sprites[color]) return this._sprites[color];
+    const c = document.createElement("canvas");
+    c.width = 96;
+    c.height = 96;
+    const x = c.getContext("2d");
+    if (!x) return null;
+    const g = x.createRadialGradient(48, 48, 0, 48, 48, 48);
+    g.addColorStop(0, hexA(color, 0.85));
+    g.addColorStop(0.35, hexA(color, 0.3));
+    g.addColorStop(1, hexA(color, 0));
+    x.fillStyle = g;
+    x.fillRect(0, 0, 96, 96);
+    return (this._sprites[color] = c);
+  }
+
+  _glyph(ctx, kind, x, y, r, color) {
+    if (r < 4) return;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = Math.max(1, r * 0.13);
+    ctx.lineCap = "round";
+    if (kind === "dev") {
+      const w = r * 0.55;
+      const h = r * 0.42;
+      ctx.strokeRect(x - w, y - h, 2 * w, 2 * h);
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.5, y + h + r * 0.14);
+      ctx.lineTo(x + w * 0.5, y + h + r * 0.14);
+      ctx.stroke();
+    } else if (kind === "inet") {
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.55, 0, 6.2832);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - r * 0.55, y);
+      ctx.lineTo(x + r * 0.55, y);
+      ctx.moveTo(x, y - r * 0.55);
+      ctx.lineTo(x, y + r * 0.55);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(x, y, r * 0.25, r * 0.55, 0, 0, 6.2832);
+      ctx.stroke();
+    } else {
+      const w = r * 0.6;
+      const h = r * 0.3;
+      ctx.strokeRect(x - w, y - h * 0.1, 2 * w, h * 1.8);
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.55, y - h * 0.1);
+      ctx.lineTo(x - w * 0.8, y - r * 0.6);
+      ctx.moveTo(x + w * 0.55, y - h * 0.1);
+      ctx.lineTo(x + w * 0.8, y - r * 0.6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x - w * 0.4, y + h * 0.8, r * 0.07, 0, 6.2832);
+      ctx.arc(x, y + h * 0.8, r * 0.07, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+
+  _render3d() {
+    const cv = this._cv;
+    if (!cv || !cv.isConnected || !this._scene) return;
+    const box = cv.parentElement.getBoundingClientRect();
+    const Wc = Math.max(320, box.width || 1000);
+    const Hc = Math.max(240, box.height || 560);
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.round(Wc * dpr);
+    const ph = Math.round(Hc * dpr);
+    if (cv.width !== pw || cv.height !== ph) {
+      cv.width = pw;
+      cv.height = ph;
+    }
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, Wc, Hc);
+    const sc = this._scene;
+    const cam = this._cam;
+    const u = Wc / 1500;
+    const dist = sc.R * 2.6;
+    const f0 = 1.14 * Wc;
+    const s0 = f0 / dist;
+    const focal = f0 * cam.k;
+    const ca = Math.cos((cam.yaw * Math.PI) / 180);
+    const sa = Math.sin((cam.yaw * Math.PI) / 180);
+    const cp = Math.cos((cam.pitch * Math.PI) / 180);
+    const sp = Math.sin((cam.pitch * Math.PI) / 180);
+    const proj = (p) => {
+      const x1 = ca * p[0] + sa * p[2];
+      const z1 = -sa * p[0] + ca * p[2];
+      const y2 = cp * p[1] - sp * z1;
+      const z2 = sp * p[1] + cp * z1;
+      const s = focal / (dist - z2);
+      return { x: Wc / 2 + cam.px + x1 * s, y: Hc / 2 + cam.py - y2 * s, z: z2, s };
+    };
+    const depthT = (z) => clamp((z + sc.R) / (2 * sc.R), 0, 1);
+    const FONT = '"Segoe UI", system-ui, -apple-system, Roboto, sans-serif';
+    const fs = clamp(Wc / 1500, 0.85, 1.25);
+
+    // Sternenstaub, leicht mitbewegt
+    if (!this._stars) {
+      let seed = 7;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      this._stars = Array.from({ length: 240 }, () => [rnd(), rnd(), 0.15 + 0.5 * rnd() ** 3, 0.5 + 1.1 * rnd() ** 3]);
+    }
+    for (const [sx, sy, a, r] of this._stars) {
+      const x = (((sx * Wc + cam.yaw * 0.6) % Wc) + Wc) % Wc;
+      const y = (((sy * Hc + cam.pitch * 0.6) % Hc) + Hc) % Hc;
+      ctx.fillStyle = `rgba(170,200,255,${a})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 6.2832);
+      ctx.fill();
+    }
+
+    const pn = sc.nodes.map((n) => ({ n, ...proj(n.p) })).sort((a, b) => a.z - b.z);
+    const P = {};
+    pn.forEach((o) => (P[o.n.id] = o));
+
+    // Nebel um die Router-Gruppen
+    pn.forEach((o) => {
+      if (!o.n.shell) return;
+      const rad = o.n.shell * o.s * 1.3;
+      const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, rad);
+      g.addColorStop(0, hexA(COLORS.wlan, 0.12));
+      g.addColorStop(1, hexA(COLORS.wlan, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, rad, 0, 6.2832);
+      ctx.fill();
+    });
+
+    // Verbindungen
+    sc.links.forEach((l) => {
+      const A = P[l.a];
+      const B = P[l.b];
+      if (!A || !B) return;
+      const lw = Math.max(0.6, l.w * u * (A.s / s0) * 0.7);
+      const path = () => {
+        ctx.beginPath();
+        ctx.moveTo(A.x, A.y);
+        ctx.lineTo(B.x, B.y);
+      };
+      if (!l.online) {
+        ctx.setLineDash([2 * u, 5 * u]);
+        ctx.strokeStyle = hexA(COLORS.offline, 0.35);
+      } else {
+        ctx.setLineDash([]);
+        if (l.w > 1.2) {
+          path();
+          ctx.strokeStyle = hexA(l.color, 0.22);
+          ctx.lineWidth = lw * 3.4;
+          ctx.stroke();
+        }
+        ctx.strokeStyle = hexA(l.color, 0.2 + 0.55 * depthT((A.z + B.z) / 2));
+      }
+      path();
+      ctx.lineWidth = lw;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Knoten, von hinten nach vorn
+    this._scr = [];
+    pn.forEach(({ n, x, y, z, s }) => {
+      const rr = n.r * u * (s / s0);
+      const spr = this._sprite(n.color);
+      ctx.globalAlpha = (n.hidden ? 0.4 : 0.45 + 0.55 * depthT(z)) * (n.online ? 1 : 0.65);
+      if (spr) ctx.drawImage(spr, x - rr * 2.6, y - rr * 2.6, rr * 5.2, rr * 5.2);
+      ctx.beginPath();
+      ctx.arc(x, y, rr, 0, 6.2832);
+      ctx.fillStyle = "#0a1534";
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, rr * 0.2);
+      ctx.strokeStyle = n.online ? n.color : COLORS.offline;
+      if (n.lease) ctx.setLineDash([rr * 0.55, rr * 0.4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      this._glyph(ctx, n.kind === "dev" ? "dev" : n.kind === "inet" ? "inet" : "router", x, y, rr, n.online ? n.color : COLORS.offline);
+      if (this._hov === n.id) {
+        ctx.beginPath();
+        ctx.arc(x, y, rr + 3, 0, 6.2832);
+        ctx.strokeStyle = "rgba(255,255,255,.85)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      this._scr.push({ id: n.id, kind: n.kind, key: n.key, hubId: n.hubId, entity: n.entity, x, y, r: rr, z });
+    });
+
+    // Beschriftungen: Router immer, Geräte nach Nähe zur Kamera, dazu das Gerät unter der Maus
+    const placed = [];
+    const rrect = (x, y, w, h, r) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    };
+    const measure = (text, sub) => {
+      ctx.font = `600 ${13 * fs}px ${FONT}`;
+      const tw = ctx.measureText(text).width;
+      ctx.font = `400 ${10.5 * fs}px ${FONT}`;
+      const sw = sub ? ctx.measureText(sub).width : 0;
+      return { w: Math.max(tw, sw) + 16 * fs, h: (sub ? 34 : 22) * fs };
+    };
+    const drawPill = (x0, y0, w, h, text, sub) => {
+      rrect(x0, y0, w, h, 7 * fs);
+      ctx.fillStyle = "rgba(8,16,40,.86)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(130,160,255,.4)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#e8efff";
+      ctx.font = `600 ${13 * fs}px ${FONT}`;
+      ctx.fillText(text, x0 + w / 2, y0 + (sub ? 12 : h / 2) * (sub ? fs : 1));
+      if (sub) {
+        ctx.fillStyle = "#8ea3d4";
+        ctx.font = `400 ${10.5 * fs}px ${FONT}`;
+        ctx.fillText(sub, x0 + w / 2, y0 + 26 * fs);
+      }
+    };
+    const hits = (r) => placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+    const place = (o, text, sub, force) => {
+      const { w, h } = measure(text, sub);
+      const rr = o.n.r * u * (o.s / s0);
+      for (const side of ["right", "left"]) {
+        const x0 = side === "right" ? o.x + rr + 6 : o.x - rr - 6 - w;
+        const y0 = o.y - h / 2;
+        const r = { x0, y0, x1: x0 + w, y1: y0 + h };
+        if (r.x0 < 4 || r.x1 > Wc - 4) continue;
+        if (!force && hits(r)) continue;
+        placed.push(r);
+        drawPill(x0, y0, w, h, text, sub);
+        return true;
+      }
+      return false;
+    };
+    // Router: Name darunter (mit Schatten, damit die Schrift vor Knoten lesbar bleibt)
+    ctx.shadowColor = "rgba(4,9,26,.95)";
+    ctx.shadowBlur = 7;
+    pn.forEach((o) => {
+      if (o.n.kind !== "hub" && o.n.kind !== "main") return;
+      const rr = o.n.r * u * (o.s / s0);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#f4f7ff";
+      ctx.font = `700 ${(o.n.kind === "main" ? 16 : 14) * fs}px ${FONT}`;
+      ctx.fillText(o.n.name, o.x, o.y + rr + 14 * fs);
+      ctx.fillStyle = "#8ea3d4";
+      ctx.font = `400 ${11 * fs}px ${FONT}`;
+      ctx.fillText(o.n.sub, o.x, o.y + rr + 30 * fs);
+      if (this._config.show_ip !== false && o.n.ip) ctx.fillText(o.n.ip, o.x, o.y + rr + 44 * fs);
+      placed.push({ x0: o.x - 80 * fs, x1: o.x + 80 * fs, y0: o.y + rr + 4, y1: o.y + rr + 52 * fs });
+    });
+    pn.filter((o) => o.n.kind === "inet").forEach((o) => {
+      const rr = o.n.r * u * (o.s / s0);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#f4f7ff";
+      ctx.font = `700 ${14 * fs}px ${FONT}`;
+      ctx.fillText(o.n.name, o.x + rr + 10, o.y);
+      placed.push({ x0: o.x, x1: o.x + rr + 140 * fs, y0: o.y - 12, y1: o.y + 12 });
+    });
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = "transparent";
+    const limit = [12, 34, 9999][cam.lab] * Math.max(0.7, Wc / 1500);
+    let shown = 0;
+    [...pn]
+      .filter((o) => o.n.kind === "dev")
+      .reverse()
+      .forEach((o) => {
+        if (shown >= limit || o.n.id === this._hov) return;
+        const sub = this._config.show_ip !== false && o.n.ip ? o.n.ip : "";
+        if (place(o, o.n.name, sub, false)) shown++;
+      });
+    const hv = pn.find((o) => o.n.id === this._hov && o.n.kind === "dev");
+    if (hv) place(hv, hv.n.name, hv.n.ip || "", true);
+
+    // Achsenkreuz
+    const gx = 46;
+    const gy = Hc - 58;
+    [[[1, 0, 0], "#ff6b81", "X"], [[0, 1, 0], "#33f0a8", "Y"], [[0, 0, 1], "#2fd4ff", "Z"]].forEach(([v, col, lb]) => {
+      const x1 = ca * v[0] + sa * v[2];
+      const z1 = -sa * v[0] + ca * v[2];
+      const y2 = cp * v[1] - sp * z1;
+      const ex = gx + x1 * 28;
+      const ey = gy - y2 * 28;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.font = `600 11px ${FONT}`;
+      ctx.textAlign = "center";
+      ctx.fillText(lb, ex + (ex - gx) * 0.28, ey + (ey - gy) * 0.28);
+    });
+    ctx.fillStyle = "rgba(110,135,190,.9)";
+    ctx.font = `400 11px ${FONT}`;
+    ctx.textAlign = "left";
+    ctx.fillText("Rechte Maustaste: drehen · Mausrad: zoomen · Mitte/links ziehen: verschieben", 16, Hc - 14);
+  }
+
+  _pick(x, y) {
+    const inside = (q) => {
+      const dx = x - q.x;
+      const dy = y - q.y;
+      return dx * dx + dy * dy <= (q.r + 5) * (q.r + 5);
+    };
+    for (let i = this._scr.length - 1; i >= 0; i--) {
+      const q = this._scr[i];
+      if (q.kind !== "dev" && inside(q)) return q; // Router, Hauptknoten und Internet zuerst
+    }
+    for (let i = this._scr.length - 1; i >= 0; i--) {
+      if (inside(this._scr[i])) return this._scr[i];
+    }
+    return null;
+  }
+
+  _anchor3d(q) {
+    if (!q || !this._cv) return null;
+    const r = this._cv.getBoundingClientRect();
+    const x = r.left + q.x;
+    const y = r.top + q.y;
+    const rad = q.r;
+    const dataset = q.kind === "dev" ? { dev: q.key } : { hub: q.hubId || "" };
+    return { dataset, getBoundingClientRect: () => ({ left: x - rad, right: x + rad, top: y - rad, bottom: y + rad, width: 2 * rad, height: 2 * rad }) };
+  }
+
+  _click3d(e, cv) {
+    if (this._suppress) {
+      this._suppress = false;
+      return;
+    }
+    const r = cv.getBoundingClientRect();
+    const hit = this._pick(e.clientX - r.left, e.clientY - r.top);
+    this._closeMenu();
+    if (!hit) return;
+    if (hit.kind === "dev") return this._devClick(this._anchor3d(hit));
+    if (hit.kind === "inet") {
+      if (hit.entity) this._moreInfo(hit.entity);
+      return;
+    }
+    this._hubClick(this._anchor3d(hit));
+  }
+
+  _hover3(e) {
+    const cv = this._cv;
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    const hit = this._pick(e.clientX - r.left, e.clientY - r.top);
+    const id = hit ? hit.id : "";
+    cv.style.cursor = hit ? "pointer" : "grab";
+    if (id !== this._hov) {
+      this._hov = id;
+      this._req3d();
+    }
+  }
+
+  _p3down(e) {
+    if (e.pointerType !== "mouse" || ![0, 1, 2].includes(e.button) || !this._cv) return;
+    this._d3 = { id: e.pointerId, btn: e.button, x: e.clientX, y: e.clientY, moved: false, yaw: this._cam.yaw, pitch: this._cam.pitch, px: this._cam.px, py: this._cam.py };
+  }
+
+  _p3move(e) {
+    const d = this._d3;
+    if (!d || e.pointerId !== d.id) return;
+    if (e.buttons === 0) return this._endDrag3(e, true);
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < 4) return;
+      d.moved = true;
+      this._cv.parentElement.classList.add("drag");
+      try {
+        this._cv.setPointerCapture(d.id);
+      } catch (err) {
+        /* ignorieren */
+      }
+    }
+    if (d.btn === 2) {
+      this._cam.yaw = d.yaw + dx * 0.35;
+      this._cam.pitch = clamp(d.pitch + dy * 0.35, -88, 88);
+    } else {
+      this._cam.px = d.px + dx;
+      this._cam.py = d.py + dy;
+    }
+    this._req3d();
+  }
+
+  _endDrag3(e, cancelled) {
+    const d = this._d3;
+    if (!d) return;
+    this._d3 = null;
+    if (this._cv) this._cv.parentElement.classList.remove("drag");
+    if (d.moved) {
+      this._suppress = true;
+      setTimeout(() => (this._suppress = false), 0);
+      return;
+    }
+    // Rechtsklick ohne Ziehen: Gerät unter dem Zeiger umbenennen
+    if (d.btn === 2 && !cancelled && this._cv) {
+      const r = this._cv.getBoundingClientRect();
+      const hit = this._pick(d.x - r.left, d.y - r.top);
+      if (hit && hit.kind === "dev") this._openRename(hit.key);
+    }
+  }
+
   _applyView() {
     const g = this._root.querySelector("#vp");
     const v = this._view;
@@ -666,6 +1218,13 @@ class NetzwerkKarte extends HTMLElement {
   }
 
   _zoomBy(a) {
+    if (this._is3d()) {
+      if (a === "reset") this._cam = { yaw: -24, pitch: 17, k: 1, px: 0, py: 0, lab: this._cam.lab };
+      else if (a === "labels") this._cam.lab = (this._cam.lab + 1) % 3;
+      else if (a === "in" || a === "out") this._cam.k = clamp(this._cam.k * (a === "in" ? 1.25 : 0.8), 0.35, 5);
+      this._req3d();
+      return;
+    }
     if (a === "layout") this._resetLayout();
     else if (a === "reset") {
       this._view = { k: 1, x: 0, y: 0 };
@@ -1125,6 +1684,7 @@ class NetzwerkKarte extends HTMLElement {
 
   _draw(m) {
     this._layout(m);
+    const is3d = this._is3d();
     this._cur = {};
     m.hubs.forEach((h) => (this._cur[`h:${h.id}`] = { x: h.px, y: h.py }));
     m.devices.forEach((d) => (this._cur[`d:${d.key}`] = { x: d.px, y: d.py }));
@@ -1205,21 +1765,37 @@ class NetzwerkKarte extends HTMLElement {
     }
     const legend = `<span class="ver">v${VERSION}</span>${chips.join("")}`;
 
+    const stage = is3d
+      ? `<div class="stage3d"><canvas class="c3d" aria-label="Netzwerk-Topologie (3D)"></canvas></div>`
+      : `<div class="scroll"><svg viewBox="${this._vb.x.toFixed(0)} ${this._vb.y.toFixed(0)} ${this._vb.w.toFixed(0)} ${this._vb.h.toFixed(0)}" role="img" aria-label="Netzwerk-Topologie">
+          <g id="vp">${links}${nodes}${labels}${empty}</g></svg></div>`;
+    const zoomBtns =
+      c.zoom === "off"
+        ? ""
+        : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Ansicht zurücksetzen">⟲</button>${
+            is3d
+              ? `<button data-zoom="labels" title="Beschriftungen: wenige, mehr, alle">Aa</button>`
+              : c.drag_nodes === false
+                ? ""
+                : `<button data-zoom="layout" title="Gespeicherte Positionen zurücksetzen">▦</button>`
+          }</div>`;
     this._root.innerHTML = `<style>${STYLE}</style>
       <ha-card>
         <header>
           <div class="brand"><div class="logo"><ha-icon icon="mdi:lan"></ha-icon></div>
             <div><h1>${esc(c.title)}</h1><div class="sub">${esc(c.subtitle)}</div></div></div>
+          <div class="mode" role="group" aria-label="Ansicht"><button data-mode="2d" class="${is3d ? "" : "on"}">2D</button><button data-mode="3d" class="${is3d ? "on" : ""}">3D</button></div>
           <span class="chip" style="--c:${chip}"><i></i>${m.internet.online ? "Internet online" : "Internet offline"}</span>
         </header>
         ${tiles ? `<div class="stats">${tiles}</div>` : ""}
         <div class="legend">${legend}</div>
-        <div class="wrap"><div class="scroll"><svg viewBox="${this._vb.x.toFixed(0)} ${this._vb.y.toFixed(0)} ${this._vb.w.toFixed(0)} ${this._vb.h.toFixed(0)}" role="img" aria-label="Netzwerk-Topologie">
-          <g id="vp">${links}${nodes}${labels}${empty}</g></svg></div>
-          ${c.zoom === "off" ? "" : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Ansicht zurücksetzen">⟲</button>${c.drag_nodes === false ? "" : `<button data-zoom="layout" title="Gespeicherte Positionen zurücksetzen">▦</button>`}</div>`}</div>
+        <div class="wrap">${stage}${zoomBtns}</div>
       </ha-card>`;
-    this._indexEls();
-    this._applyView();
+    if (is3d) this._init3d();
+    else {
+      this._indexEls();
+      this._applyView();
+    }
   }
 }
 

@@ -2,6 +2,7 @@ type: custom:netzwerk-karte
 title: Netzwerk
 subtitle: LAN · WLAN · Mesh
 internet_entity: binary_sensor.fritz_box_6490_verbindung   # an deine Entität anpassen
+view: 2d                       # 2d oder 3d (Startansicht)
 zoom: wheel                    # wheel = Mausrad, ctrl = Strg + Mausrad, off = aus
 
 # Zentrum: die Firewall
