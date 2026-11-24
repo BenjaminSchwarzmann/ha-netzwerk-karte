@@ -113,11 +113,14 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 Mit dem Umschalter **2D | 3D** neben dem Titel wechselst du zwischen der flachen Darstellung und einer räumlichen Ansicht. Die Wahl wird pro Benutzer gespeichert. Mit `view: 3d` startet die Karte standardmäßig räumlich.
 
 - **Drehen und neigen:** Rechte Maustaste gedrückt halten und ziehen. Der Mittelpunkt der Drehung ist der Hauptknoten (z. B. OPNsense).
-- **Zoomen:** Mausrad (oder `+` und `−`). **Verschieben:** linke oder mittlere Maustaste ziehen.
+- **Ansicht verschieben:** Linke Maustaste auf dem **leeren Hintergrund** gedrückt halten und ziehen (oder mittlere Maustaste). Dann wandert die gesamte Darstellung.
+- **Knoten verschieben:** Linke Maustaste auf einem **Gerät** oder einer **Fritzbox** gedrückt halten und ziehen. Das Gerät folgt dem Mauszeiger parallel zum Bildschirm. Bei einem Router wandert die ganze Gruppe mit. Hauptknoten und Internet-Knoten sind nicht verschiebbar, ein Ziehen darauf verschiebt die Ansicht.
+- **Standardposition:** Doppelklick auf einen verschobenen Knoten. Die Schaltfläche ▦ setzt alle Positionen der aktuellen Ansicht zurück.
+- **Zoomen:** Mausrad (oder `+` und `−`).
 - **Zurücksetzen:** Doppelklick auf den leeren Hintergrund oder ⟲.
 - **Beschriftungen:** Router sind immer beschriftet, bei Geräten nur die der Kamera nächsten und das Gerät unter dem Mauszeiger. Die Schaltfläche **Aa** schaltet zwischen *wenige*, *mehr* und *alle* um.
 - **Klicken:** Wie in 2D öffnet ein Klick auf ein Gerät das Infofenster und ein Klick auf einen Router sein Link-Menü. Ein Rechtsklick **ohne Ziehen** auf ein Gerät öffnet das Umbenennen.
-- **Anordnung:** Die Router liegen wie in 2D, mit leichtem Höhenunterschied. Die Geräte sitzen auf einer abgeflachten Kugelschale um ihren Router. Die Lage wird aus dem Gerät berechnet und bleibt beim Umbenennen gleich. Einzelne Knoten lassen sich in 3D nicht verschieben, dafür gibt es die 2D-Ansicht.
+- **Anordnung:** Die Router liegen wie in 2D, mit leichtem Höhenunterschied. Die Geräte sitzen auf einer abgeflachten Kugelschale um ihren Router. Die Lage wird aus dem Gerät berechnet und bleibt beim Umbenennen gleich. Verschobene Positionen speichert die Karte getrennt von der 2D-Ansicht in den Benutzerdaten (`netzwerk-karte-positionen3d`). Geräte werden relativ zu ihrem Router gespeichert.
 - **Ausblenden, Leases, Namen:** Alles funktioniert wie in 2D, ebenso die Legende.
 
 Die 3D-Ansicht braucht keine zusätzliche Bibliothek. Sie funktioniert nur mit der Maus, nicht per Touch. Auf schwachen Geräten kann das Drehen bei sehr vielen Knoten ruckeln.
@@ -152,7 +155,7 @@ Ein vollständiges Beispiel steht in [`examples/karte.yaml`](examples/karte.yaml
 | `hubs` | – | Weitere Knoten: `name`, `ssid`, `subnet` (CIDR, auch Liste), `ip`, `mac`, `url`, `gateway`, `links`, `id`, `match`, `parent`, `link` (`lan`/`mesh`/`wlan`), `x`, `y`, `icon`, `entity` |
 | `leases` | – | OPNsense-DHCP-Leases abgleichen: `entity`, `attribute` (Standard `rows`), `include`, `exclude`, `show` (`false` = zunächst ausgeblendet) |
 | `show_ip` | `true` | IP-Adresse unter dem Namen von Geräten und Routern anzeigen |
-| `drag_nodes` | `true` | Knoten per Maus verschiebbar |
+| `drag_nodes` | `true` | Knoten per Maus verschiebbar (2D und 3D) |
 | `label_mode` | `auto` | `auto`, `radial` (gedrehte Beschriftung) oder `horizontal` |
 | `view` | `2d` | Startansicht: `2d` oder `3d` (der Umschalter in der Karte hat danach Vorrang) |
 | `device_click` | `info` | Klick auf ein Gerät: `info` (Infofenster) oder `more-info` (Home-Assistant-Dialog) |
@@ -182,13 +185,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.3.4"
+git commit -m "Netzwerk-Karte 0.4.0"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.3.4`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.0`), damit Updates erkannt werden.
 
 ## Lizenz
 

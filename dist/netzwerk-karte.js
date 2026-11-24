@@ -1,8 +1,9 @@
-/*! netzwerk-karte 0.3.4 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.3.4";
+/*! netzwerk-karte 0.4.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.4.0";
 const NAMES_KEY = "netzwerk-karte-namen";
 const POS_KEY = "netzwerk-karte-positionen";
 const OPT_KEY = "netzwerk-karte-optionen";
+const POS3_KEY = "netzwerk-karte-positionen3d";
 const W = 1500;
 const H = 880;
 const COLORS = {
@@ -183,6 +184,7 @@ class NetzwerkKarte extends HTMLElement {
     this._suppress = false;
     this._names = {};
     this._pos = {};
+    this._pos3 = {};
     this._opts = {};
     this._showHidden = false;
     this._vb = { x: 0, y: 0, w: W, h: H };
@@ -309,7 +311,9 @@ class NetzwerkKarte extends HTMLElement {
       const t = e.target;
       if (t.closest && t.closest(".stage3d")) {
         const rc = this._cv.getBoundingClientRect();
-        if (!this._pick(e.clientX - rc.left, e.clientY - rc.top)) this._zoomBy("reset");
+        const hit = this._pick(e.clientX - rc.left, e.clientY - rc.top);
+        if (!hit) this._zoomBy("reset");
+        else if (hit.kind === "dev" || hit.kind === "hub") this._persist(POS3_KEY, "_pos3", hit.id, null); // Standardposition
         return;
       }
       if (!t.closest || !t.closest(".scroll")) return;
@@ -387,6 +391,7 @@ class NetzwerkKarte extends HTMLElement {
     };
     this._names = await load(NAMES_KEY);
     this._pos = await load(POS_KEY);
+    this._pos3 = await load(POS3_KEY);
     this._opts = await load(OPT_KEY);
     this._namesLoaded = true;
     this._namesLoading = false;
@@ -444,18 +449,21 @@ class NetzwerkKarte extends HTMLElement {
   }
 
   async _resetLayout() {
-    if (!Object.keys(this._pos).length) return;
-    if (!window.confirm("Alle gespeicherten Positionen zurücksetzen?")) return;
-    this._pos = {};
+    const is3 = this._is3d();
+    const prop = is3 ? "_pos3" : "_pos";
+    const key = is3 ? POS3_KEY : POS_KEY;
+    if (!Object.keys(this[prop]).length) return;
+    if (!window.confirm("Alle gespeicherten Positionen dieser Ansicht zurücksetzen?")) return;
+    this[prop] = {};
     try {
-      localStorage.removeItem(POS_KEY);
+      localStorage.removeItem(key);
     } catch (err) {
       /* ignorieren */
     }
     this._key = "";
     this._update();
     try {
-      await this._hass.callWS({ type: "frontend/set_user_data", key: POS_KEY, value: {} });
+      await this._hass.callWS({ type: "frontend/set_user_data", key, value: {} });
     } catch (err) {
       /* ignorieren */
     }
@@ -719,8 +727,14 @@ class NetzwerkKarte extends HTMLElement {
     const nodes = [];
     const links = [];
     const hub3 = {};
+    const hubDef = {};
+    let maxDef = 0;
     m.hubs.forEach((h) => {
-      const p = [h.px - MAIN.px, h.main ? 0 : (hash(`y${h.id}`) - 0.5) * 240, h.py - MAIN.py];
+      const def = [h.px - MAIN.px, h.main ? 0 : (hash(`y${h.id}`) - 0.5) * 240, h.py - MAIN.py];
+      hubDef[h.id] = def;
+      maxDef = Math.max(maxDef, Math.hypot(def[0], def[1], def[2]));
+      const sv = h.main ? null : this._pos3[`h:${h.id}`];
+      const p = sv && isFinite(sv.x) && isFinite(sv.y) && isFinite(sv.z) ? [sv.x, sv.y, sv.z] : def;
       hub3[h.id] = p;
       nodes.push({
         id: `h:${h.id}`, kind: h.main ? "main" : "hub", hubId: h.id, p, r: h.main ? 22 : 16,
@@ -747,10 +761,15 @@ class NetzwerkKarte extends HTMLElement {
         const j = 0.82 + 0.34 * hash(`j${d.key}`);
         const hp = hub3[h.id];
         const color = d.online ? COLORS[d.connection] || COLORS.wlan : COLORS.offline;
+        let o = [Math.cos(th) * rad * R3 * j, y * R3 * 0.62 * j, Math.sin(th) * rad * R3 * j];
+        const dh = hubDef[h.id];
+        maxDef = Math.max(maxDef, Math.hypot(dh[0] + o[0], dh[1] + o[1], dh[2] + o[2]));
+        const sd = this._pos3[`d:${d.key}`];
+        if (sd && sd.hub === h.id && isFinite(sd.dx) && isFinite(sd.dy) && isFinite(sd.dz)) o = [sd.dx, sd.dy, sd.dz];
         nodes.push({
           id: `d:${d.key}`, kind: "dev", key: d.key, hubId: h.id, r: 8.5, color, online: d.online,
           lease: !!d.lease, hidden: !!d.hidden, name: d.name, ip: d.ip || "", entity: d.entity,
-          p: [hp[0] + Math.cos(th) * rad * R3 * j, hp[1] + y * R3 * 0.62 * j, hp[2] + Math.sin(th) * rad * R3 * j],
+          p: [hp[0] + o[0], hp[1] + o[1], hp[2] + o[2]],
         });
         links.push({ a: `h:${h.id}`, b: `d:${d.key}`, color, w: 1, online: d.online });
       });
@@ -760,7 +779,7 @@ class NetzwerkKarte extends HTMLElement {
       name: m.internet.online ? "Internet online" : "Internet offline", entity: m.internet.entity,
     });
     links.push({ a: "i:net", b: `h:${MAIN.id}`, color: COLORS.internet, w: 1.6, online: m.internet.online });
-    const R = Math.max(500, ...nodes.map((q) => Math.hypot(q.p[0], q.p[1], q.p[2]))) + 60;
+    const R = Math.max(500, maxDef, Math.hypot(120, 330, 110)) + 60; // aus der Standardanordnung, damit die Ansicht beim Verschieben ruhig bleibt
     return { nodes, links, R };
   }
 
@@ -974,7 +993,7 @@ class NetzwerkKarte extends HTMLElement {
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      this._scr.push({ id: n.id, kind: n.kind, key: n.key, hubId: n.hubId, entity: n.entity, x, y, r: rr, z });
+      this._scr.push({ id: n.id, kind: n.kind, key: n.key, hubId: n.hubId, entity: n.entity, x, y, r: rr, z, s });
     });
 
     // Beschriftungen: Router immer, Geräte nach Nähe zur Kamera, dazu das Gerät unter der Maus
@@ -1093,7 +1112,7 @@ class NetzwerkKarte extends HTMLElement {
     ctx.fillStyle = "rgba(110,135,190,.9)";
     ctx.font = `400 11px ${FONT}`;
     ctx.textAlign = "left";
-    ctx.fillText("Rechte Maustaste: drehen · Mausrad: zoomen · Mitte/links ziehen: verschieben", 16, Hc - 14);
+    ctx.fillText("Rechte Maustaste: drehen · Mausrad: zoomen · Links auf Hintergrund: Ansicht verschieben · Links auf Knoten: Knoten verschieben", 16, Hc - 14);
   }
 
   _pick(x, y) {
@@ -1154,7 +1173,18 @@ class NetzwerkKarte extends HTMLElement {
 
   _p3down(e) {
     if (e.pointerType !== "mouse" || ![0, 1, 2].includes(e.button) || !this._cv) return;
-    this._d3 = { id: e.pointerId, btn: e.button, x: e.clientX, y: e.clientY, moved: false, yaw: this._cam.yaw, pitch: this._cam.pitch, px: this._cam.px, py: this._cam.py };
+    const d = { id: e.pointerId, btn: e.button, x: e.clientX, y: e.clientY, moved: false, yaw: this._cam.yaw, pitch: this._cam.pitch, px: this._cam.px, py: this._cam.py, node: null };
+    // Linke Taste auf einem Gerät oder Router: Knoten verschieben (Router samt Gruppe). Sonst: ganze Ansicht verschieben.
+    if (e.button === 0 && this._config.drag_nodes !== false && this._scene) {
+      const rc = this._cv.getBoundingClientRect();
+      const hit = this._pick(e.clientX - rc.left, e.clientY - rc.top);
+      if (hit && (hit.kind === "dev" || hit.kind === "hub")) {
+        const n = this._scene.nodes.find((q) => q.id === hit.id);
+        const kids = hit.kind === "hub" ? this._scene.nodes.filter((q) => q.kind === "dev" && q.hubId === hit.hubId) : [];
+        if (n) d.node = { n, s: hit.s, p0: n.p.slice(), kids: kids.map((k) => ({ n: k, p0: k.p.slice() })) };
+      }
+    }
+    this._d3 = d;
   }
 
   _p3move(e) {
@@ -1173,6 +1203,23 @@ class NetzwerkKarte extends HTMLElement {
         /* ignorieren */
       }
     }
+    if (d.node) {
+      // Bildschirmbewegung in die Ebene parallel zum Bildschirm umrechnen und in Weltkoordinaten zurückdrehen
+      const ca = Math.cos((this._cam.yaw * Math.PI) / 180);
+      const sa = Math.sin((this._cam.yaw * Math.PI) / 180);
+      const cp = Math.cos((this._cam.pitch * Math.PI) / 180);
+      const sp = Math.sin((this._cam.pitch * Math.PI) / 180);
+      const vx = dx / d.node.s;
+      const vy = -dy / d.node.s;
+      const y1 = cp * vy;
+      const z1 = -sp * vy;
+      const w = [ca * vx - sa * z1, y1, sa * vx + ca * z1];
+      const mv = (o) => (o.n.p = [o.p0[0] + w[0], o.p0[1] + w[1], o.p0[2] + w[2]]);
+      mv(d.node);
+      d.node.kids.forEach(mv);
+      this._req3d();
+      return;
+    }
     if (d.btn === 2) {
       this._cam.yaw = d.yaw + dx * 0.35;
       this._cam.pitch = clamp(d.pitch + dy * 0.35, -88, 88);
@@ -1183,6 +1230,16 @@ class NetzwerkKarte extends HTMLElement {
     this._req3d();
   }
 
+  _commitMove3(n) {
+    const r = (v) => Math.round(v * 10) / 10;
+    if (n.kind === "hub") {
+      this._persist(POS3_KEY, "_pos3", n.id, { x: r(n.p[0]), y: r(n.p[1]), z: r(n.p[2]) });
+      return;
+    }
+    const hub = this._scene.nodes.find((q) => q.id === `h:${n.hubId}`);
+    if (hub) this._persist(POS3_KEY, "_pos3", n.id, { hub: n.hubId, dx: r(n.p[0] - hub.p[0]), dy: r(n.p[1] - hub.p[1]), dz: r(n.p[2] - hub.p[2]) });
+  }
+
   _endDrag3(e, cancelled) {
     const d = this._d3;
     if (!d) return;
@@ -1191,6 +1248,7 @@ class NetzwerkKarte extends HTMLElement {
     if (d.moved) {
       this._suppress = true;
       setTimeout(() => (this._suppress = false), 0);
+      if (d.node && !cancelled) this._commitMove3(d.node.n);
       return;
     }
     // Rechtsklick ohne Ziehen: Gerät unter dem Zeiger umbenennen
@@ -1219,6 +1277,7 @@ class NetzwerkKarte extends HTMLElement {
 
   _zoomBy(a) {
     if (this._is3d()) {
+      if (a === "layout") return this._resetLayout();
       if (a === "reset") this._cam = { yaw: -24, pitch: 17, k: 1, px: 0, py: 0, lab: this._cam.lab };
       else if (a === "labels") this._cam.lab = (this._cam.lab + 1) % 3;
       else if (a === "in" || a === "out") this._cam.k = clamp(this._cam.k * (a === "in" ? 1.25 : 0.8), 0.35, 5);
@@ -1773,11 +1832,9 @@ class NetzwerkKarte extends HTMLElement {
       c.zoom === "off"
         ? ""
         : `<div class="zoom"><button data-zoom="in" title="Vergrößern">+</button><button data-zoom="out" title="Verkleinern">−</button><button data-zoom="reset" title="Ansicht zurücksetzen">⟲</button>${
-            is3d
-              ? `<button data-zoom="labels" title="Beschriftungen: wenige, mehr, alle">Aa</button>`
-              : c.drag_nodes === false
-                ? ""
-                : `<button data-zoom="layout" title="Gespeicherte Positionen zurücksetzen">▦</button>`
+            `${is3d ? `<button data-zoom="labels" title="Beschriftungen: wenige, mehr, alle">Aa</button>` : ""}${
+              c.drag_nodes === false ? "" : `<button data-zoom="layout" title="Gespeicherte Positionen dieser Ansicht zurücksetzen">▦</button>`
+            }`
           }</div>`;
     this._root.innerHTML = `<style>${STYLE}</style>
       <ha-card>
