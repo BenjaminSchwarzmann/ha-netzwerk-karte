@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.4.0 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.4.0";
+/*! netzwerk-karte 0.4.1 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.4.1";
 const NAMES_KEY = "netzwerk-karte-namen";
 const POS_KEY = "netzwerk-karte-positionen";
 const OPT_KEY = "netzwerk-karte-optionen";
@@ -13,6 +13,7 @@ const COLORS = {
   internet: "#33f0a8",
   offline: "#5b6478",
   dhcp: "#ff9f43",
+  hit: "#ffd60a",
   bad: "#ff6b81",
 };
 const LABELS = { wlan: "WLAN", lan: "LAN", mesh: "Mesh", internet: "Internet", offline: "Offline", dhcp: "Nur DHCP-Lease" };
@@ -156,8 +157,55 @@ const STYLE = `
   .mode button { border: 0; background: none; color: #a0b9eb; font: 600 13px inherit; padding: 6px 16px; border-radius: 999px; cursor: pointer; }
   .mode button.on { background: ${COLORS.wlan}; color: #06102a; }
   .stage3d { position: relative; width: 100%; aspect-ratio: 1.8 / 1; min-height: 380px; }
-  .stage3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
+  .stage3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   .stage3d.drag canvas { cursor: grabbing; }
+  header { gap: 12px 14px; }
+  .searchbox { position: relative; flex: 1 1 300px; max-width: 520px; min-width: 0; display: flex; align-items: center; }
+  .searchbox .sicon { position: absolute; left: 16px; color: #a0b9eb; pointer-events: none; }
+  .sinput { width: 100%; box-sizing: border-box; height: 46px; padding: 0 44px; border-radius: 999px; border: 1px solid rgba(90,140,255,.4);
+    background: rgba(10,22,52,.92); color: #f0f4ff; font: 500 15px inherit; outline: none; }
+  .sinput::placeholder { color: #6f84b8; }
+  .sinput:focus, .searchbox.has .sinput { border-color: ${COLORS.hit}; box-shadow: 0 0 0 1px rgba(255,214,10,.35); }
+  .searchbox.has .sicon { color: ${COLORS.hit}; }
+  .sclear { display: none; position: absolute; right: 8px; width: 30px; height: 30px; border-radius: 50%; border: 0;
+    background: rgba(40,60,110,.95); color: #d2e1ff; font-size: 18px; line-height: 1; cursor: pointer; }
+  .searchbox.has .sclear { display: block; }
+  .sdrop { position: absolute; z-index: 8; left: 0; right: 0; top: 54px; padding: 6px; min-width: 280px; border-radius: 16px;
+    background: rgba(10,20,46,.98); border: 1px solid rgba(90,140,255,.45); box-shadow: 0 14px 34px rgba(0,0,0,.55); }
+  .sdrop[hidden] { display: none; }
+  .sitem { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+  .sitem:hover, .sitem.cur { background: rgba(255,214,10,.13); }
+  .sitem i { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid ${COLORS.hit}; }
+  .sitem div { flex: 1; min-width: 0; }
+  .sitem b { display: block; font-size: 14px; font-weight: 600; color: #f0f4ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sitem small { display: block; font-size: 12px; color: #8ea3d4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sitem em { flex: none; font-style: normal; font-size: 12px; color: #6f84b8; }
+  .sfoot { padding: 6px 10px 4px; font-size: 12px; color: #6f84b8; }
+  .shits { display: inline-flex; align-items: center; gap: 4px; height: 46px; padding: 0 8px 0 18px; border-radius: 999px;
+    border: 1.5px solid rgba(255,214,10,.85); background: rgba(44,36,6,.92); color: ${COLORS.hit}; font-weight: 600; font-size: 15px; }
+  .shits[hidden] { display: none; }
+  .shits.none { border-color: rgba(255,107,129,.7); background: rgba(50,14,24,.9); color: #ff9aa9; padding-right: 18px; }
+  .shits button { border: 0; background: none; color: #ffe9a0; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
+  .shits button:hover { background: rgba(255,214,10,.16); }
+  .node .pulse { fill: none; stroke: ${COLORS.hit}; stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; pointer-events: none; }
+  .node.hit .pulse { animation: pulse 1.7s ease-out infinite; }
+  .node.hit .pulse.p2 { animation-delay: .85s; }
+  .node.hit circle.ring { stroke: ${COLORS.hit}; filter: drop-shadow(0 0 9px ${COLORS.hit}); }
+  .node.cur circle.ring { stroke-width: 3.5; }
+  .scroll.searching .node:not(.hit) { opacity: .28; }
+  .scroll.searching .lab:not(.hit) { opacity: .3; }
+  .scroll.searching line:not(.hit) { opacity: .15; }
+  line.hit { stroke: ${COLORS.hit}; opacity: .95; }
+  @keyframes pulse { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(2.8); } }
+  .menu tr.hl td { background: rgba(255,214,10,.15); color: #ffe27a; }
+  @media (pointer: coarse) { .scroll { touch-action: none; } svg { min-width: 0; } }
+  @media (max-width: 640px) {
+    .searchbox { order: 5; flex: 1 1 100%; max-width: none; }
+    .shits { order: 6; }
+    .stage3d { aspect-ratio: auto; height: 66vh; min-height: 420px; }
+    h1 { font-size: 22px; letter-spacing: .12em; }
+    .logo { width: 38px; height: 38px; }
+  }
   .legend [data-toggle] { cursor: pointer; padding: 2px 10px; border: 1px solid rgba(90,140,255,.3); border-radius: 999px; }
   .legend [data-toggle]:hover { border-color: var(--c); }
   .legend [data-toggle].inactive { opacity: .55; text-decoration: line-through; }
@@ -171,7 +219,7 @@ const STYLE = `
   .flow { stroke-dasharray: 3 9; animation: flow 1.6s linear infinite; }
   @keyframes flow { to { stroke-dashoffset: -24; } }
   .empty { fill: #8ea3d4; font-size: 15px; }
-  @media (prefers-reduced-motion: reduce) { .flow { animation: none; } .node circle.ring { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .flow { animation: none; } .node.hit .pulse { animation: none; opacity: .55; } .node circle.ring { transition: none; } }
 `;
 
 class NetzwerkKarte extends HTMLElement {
@@ -196,9 +244,53 @@ class NetzwerkKarte extends HTMLElement {
     this._hov = "";
     this._scr = [];
     this._pending = false;
+    this._q = "";
+    this._hits = [];
+    this._hitSet = new Set();
+    this._hitIdx = -1;
+    this._sfocus = false;
+    this._scaret = 0;
+    this._tp = new Map();
+    this._tg = null;
+    this._tw = null;
     const r = this._root;
     r.addEventListener("click", (e) => this._onClick(e));
+    r.addEventListener("input", (e) => {
+      const t = e.target;
+      if (t && t.classList && t.classList.contains("sinput")) {
+        this._scaret = t.selectionStart;
+        this._setQuery(t.value);
+      }
+    });
+    r.addEventListener("focusin", (e) => {
+      if (e.target.classList && e.target.classList.contains("sinput")) {
+        this._sfocus = true;
+        this._updateSearchUI();
+      }
+    });
+    r.addEventListener("focusout", (e) => {
+      if (!(e.target.classList && e.target.classList.contains("sinput"))) return;
+      setTimeout(() => {
+        const a = this._root.activeElement;
+        if (!(a && a.classList && a.classList.contains("sinput"))) {
+          this._sfocus = false;
+          this._updateSearchUI();
+        }
+      }, 200);
+    });
     r.addEventListener("keydown", (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains("sinput")) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this._stepHit(e.shiftKey ? -1 : 1);
+        } else if (e.key === "Escape") {
+          if (this._q) {
+            e.target.value = "";
+            this._setQuery("");
+          } else e.target.blur();
+        }
+        return;
+      }
       if (e.target && e.target.tagName === "INPUT") {
         if (e.key === "Enter") this._saveInput(e.target);
         else if (e.key === "Escape") this._closeMenu();
@@ -241,9 +333,11 @@ class NetzwerkKarte extends HTMLElement {
       { passive: false }
     );
     r.addEventListener("mousedown", (e) => {
+      if (e.target.closest && e.target.closest(".sdrop")) e.preventDefault(); // Fokus im Suchfeld behalten
       if (e.button === 1 && e.target.closest && (e.target.closest(".scroll") || e.target.closest(".stage3d"))) e.preventDefault();
     });
     r.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch") return this._tdown(e);
       if (e.target.closest && e.target.closest(".stage3d")) return this._p3down(e);
       if (e.pointerType !== "mouse" || (e.button !== 0 && e.button !== 1)) return;
       const t = e.target;
@@ -267,6 +361,7 @@ class NetzwerkKarte extends HTMLElement {
       }
     });
     r.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "touch") return this._tmove(e);
       if (this._d3) return this._p3move(e);
       if (e.buttons === 0 && e.target.closest && e.target.closest(".stage3d")) return this._hover3(e);
       const d = this._drag;
@@ -300,10 +395,12 @@ class NetzwerkKarte extends HTMLElement {
       this._applyView();
     });
     r.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "touch") return this._tup(e);
       this._endDrag();
       this._endDrag3(e);
     });
     r.addEventListener("pointercancel", (e) => {
+      if (e.pointerType === "touch") return this._tup(e);
       this._endDrag();
       this._endDrag3(e, true);
     });
@@ -522,6 +619,10 @@ class NetzwerkKarte extends HTMLElement {
     if (!t) return;
     const z = t.closest("[data-zoom]");
     if (z) return this._zoomBy(z.dataset.zoom);
+    const sa = t.closest("[data-search]");
+    if (sa) return this._searchAct(sa.dataset.search);
+    const sh = t.closest("[data-hit]");
+    if (sh) return this._goto(sh.dataset.hit);
     const tg = t.closest("[data-toggle]");
     if (tg) return this._toggle(tg.dataset.toggle);
     const md = t.closest("[data-mode]");
@@ -648,10 +749,12 @@ class NetzwerkKarte extends HTMLElement {
             .map(([k, v]) => [k, fmt(k, v)]),
         ]
       : [];
-    const table = (r) => `<table>${r.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>`;
+    const terms = this._terms();
+    const rowHtml = (x) => `<tr${terms.length && terms.some((q) => `${x[0]} ${x[1]}`.toLowerCase().includes(q)) ? ' class="hl"' : ""}><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`;
+    const table = (r) => `<table>${r.map(rowHtml).join("")}</table>`;
     const html = `<div class="mh">${esc(d.name)}</div>${table(rows)}
-      ${extra.length ? `<table><tr class="sep"><td colspan="2">WEITERE ATTRIBUTE</td></tr>${extra.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
-      ${leaseRows.length ? `<table><tr class="sep"><td colspan="2">DHCP-LEASE (OPNSENSE)</td></tr>${leaseRows.map((x) => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>` : ""}
+      ${extra.length ? `<table><tr class="sep"><td colspan="2">WEITERE ATTRIBUTE</td></tr>${extra.map(rowHtml).join("")}</table>` : ""}
+      ${leaseRows.length ? `<table><tr class="sep"><td colspan="2">DHCP-LEASE (OPNSENSE)</td></tr>${leaseRows.map(rowHtml).join("")}</table>` : ""}
       <div class="row"><button data-act="rename">Umbenennen</button><button data-act="${d.hidden ? "unhide" : "hide"}">${d.hidden ? "Einblenden" : "Ausblenden"}</button>${d.entity ? `<button data-act="more" data-entity="${esc(d.entity)}">Entität öffnen</button>` : ""}</div>`;
     this._showMenu(html, el, "info", d.key);
   }
@@ -894,14 +997,11 @@ class NetzwerkKarte extends HTMLElement {
     const sa = Math.sin((cam.yaw * Math.PI) / 180);
     const cp = Math.cos((cam.pitch * Math.PI) / 180);
     const sp = Math.sin((cam.pitch * Math.PI) / 180);
-    const proj = (p) => {
-      const x1 = ca * p[0] + sa * p[2];
-      const z1 = -sa * p[0] + ca * p[2];
-      const y2 = cp * p[1] - sp * z1;
-      const z2 = sp * p[1] + cp * z1;
-      const s = focal / (dist - z2);
-      return { x: Wc / 2 + cam.px + x1 * s, y: Hc / 2 + cam.py - y2 * s, z: z2, s };
-    };
+    const proj = this._projFor(cam, Wc, Hc);
+    const hitSet = this._hitSet;
+    const searching = hitSet.size > 0;
+    const reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const phase = reduce ? 0.35 : (Date.now() % 1700) / 1700;
     const depthT = (z) => clamp((z + sc.R) / (2 * sc.R), 0, 1);
     const FONT = '"Segoe UI", system-ui, -apple-system, Roboto, sans-serif';
     const fs = clamp(Wc / 1500, 0.85, 1.25);
@@ -943,24 +1043,27 @@ class NetzwerkKarte extends HTMLElement {
       const A = P[l.a];
       const B = P[l.b];
       if (!A || !B) return;
-      const lw = Math.max(0.6, l.w * u * (A.s / s0) * 0.7);
+      const lh = searching && (hitSet.has(l.a) || hitSet.has(l.b));
+      const fade = searching && !lh ? 0.25 : 1;
+      const lw = Math.max(0.6, l.w * u * (A.s / s0) * (lh ? 1.1 : 0.7));
       const path = () => {
         ctx.beginPath();
         ctx.moveTo(A.x, A.y);
         ctx.lineTo(B.x, B.y);
       };
-      if (!l.online) {
+      const lc = lh ? COLORS.hit : l.color;
+      if (!l.online && !lh) {
         ctx.setLineDash([2 * u, 5 * u]);
-        ctx.strokeStyle = hexA(COLORS.offline, 0.35);
+        ctx.strokeStyle = hexA(COLORS.offline, 0.35 * fade);
       } else {
         ctx.setLineDash([]);
-        if (l.w > 1.2) {
+        if (l.w > 1.2 || lh) {
           path();
-          ctx.strokeStyle = hexA(l.color, 0.22);
+          ctx.strokeStyle = hexA(lc, 0.22 * fade + (lh ? 0.2 : 0));
           ctx.lineWidth = lw * 3.4;
           ctx.stroke();
         }
-        ctx.strokeStyle = hexA(l.color, 0.2 + 0.55 * depthT((A.z + B.z) / 2));
+        ctx.strokeStyle = hexA(lc, lh ? 0.95 : (0.2 + 0.55 * depthT((A.z + B.z) / 2)) * fade);
       }
       path();
       ctx.lineWidth = lw;
@@ -970,22 +1073,50 @@ class NetzwerkKarte extends HTMLElement {
 
     // Knoten, von hinten nach vorn
     this._scr = [];
+    const curId = this._hits[this._hitIdx];
     pn.forEach(({ n, x, y, z, s }) => {
       const rr = n.r * u * (s / s0);
-      const spr = this._sprite(n.color);
-      ctx.globalAlpha = (n.hidden ? 0.4 : 0.45 + 0.55 * depthT(z)) * (n.online ? 1 : 0.65);
-      if (spr) ctx.drawImage(spr, x - rr * 2.6, y - rr * 2.6, rr * 5.2, rr * 5.2);
+      const hit = hitSet.has(n.id);
+      const col = hit ? COLORS.hit : n.color;
+      const spr = this._sprite(col);
+      const dimmed = searching && !hit ? 0.28 : 1;
+      ctx.globalAlpha = (n.hidden ? 0.4 : 0.45 + 0.55 * depthT(z)) * (n.online ? 1 : 0.65) * dimmed;
+      if (spr) ctx.drawImage(spr, x - rr * (hit ? 3.4 : 2.6), y - rr * (hit ? 3.4 : 2.6), rr * (hit ? 6.8 : 5.2), rr * (hit ? 6.8 : 5.2));
       ctx.beginPath();
       ctx.arc(x, y, rr, 0, 6.2832);
       ctx.fillStyle = "#0a1534";
       ctx.fill();
-      ctx.lineWidth = Math.max(1, rr * 0.2);
-      ctx.strokeStyle = n.online ? n.color : COLORS.offline;
-      if (n.lease) ctx.setLineDash([rr * 0.55, rr * 0.4]);
+      ctx.lineWidth = Math.max(1, rr * (hit ? 0.28 : 0.2));
+      ctx.strokeStyle = hit ? COLORS.hit : n.online ? n.color : COLORS.offline;
+      if (n.lease && !hit) ctx.setLineDash([rr * 0.55, rr * 0.4]);
       ctx.stroke();
       ctx.setLineDash([]);
-      this._glyph(ctx, n.kind === "dev" ? "dev" : n.kind === "inet" ? "inet" : "router", x, y, rr, n.online ? n.color : COLORS.offline);
+      this._glyph(ctx, n.kind === "dev" ? "dev" : n.kind === "inet" ? "inet" : "router", x, y, rr, hit ? COLORS.hit : n.online ? n.color : COLORS.offline);
+      if (hit) {
+        ctx.globalAlpha = 1;
+        for (let k = 0; k < 2; k++) {
+          const t = (phase + k * 0.5) % 1; // pulsierende Ringe
+          ctx.beginPath();
+          ctx.arc(x, y, rr * (1.15 + 1.9 * t), 0, 6.2832);
+          ctx.strokeStyle = hexA(COLORS.hit, (1 - t) * 0.85);
+          ctx.lineWidth = Math.max(1.2, rr * 0.16);
+          ctx.stroke();
+        }
+        if (n.id === curId) {
+          const q = rr * 2.1;
+          ctx.strokeStyle = COLORS.hit;
+          ctx.lineWidth = Math.max(2, rr * 0.2);
+          [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
+            ctx.beginPath();
+            ctx.moveTo(x + sx * q, y + sy * (q - rr * 0.8));
+            ctx.lineTo(x + sx * q, y + sy * q);
+            ctx.lineTo(x + sx * (q - rr * 0.8), y + sy * q);
+            ctx.stroke();
+          });
+        }
+      }
       if (this._hov === n.id) {
+        ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(x, y, rr + 3, 0, 6.2832);
         ctx.strokeStyle = "rgba(255,255,255,.85)";
@@ -1082,10 +1213,18 @@ class NetzwerkKarte extends HTMLElement {
       .filter((o) => o.n.kind === "dev")
       .reverse()
       .forEach((o) => {
-        if (shown >= limit || o.n.id === this._hov) return;
+        if (searching || shown >= limit || o.n.id === this._hov) return;
         const sub = this._config.show_ip !== false && o.n.ip ? o.n.ip : "";
         if (place(o, o.n.name, sub, false)) shown++;
       });
+    if (searching) {
+      // Treffer immer beschriften (aktueller Treffer zuerst)
+      const order = [...pn].filter((o) => hitSet.has(o.n.id) && o.n.kind === "dev").sort((a, b) => (b.n.id === curId) - (a.n.id === curId) || b.z - a.z);
+      order.slice(0, 12).forEach((o) => {
+        const sub = this._config.show_ip !== false && o.n.ip ? o.n.ip : "";
+        if (!place(o, o.n.name, sub, false)) place(o, o.n.name, sub, true);
+      });
+    }
     const hv = pn.find((o) => o.n.id === this._hov && o.n.kind === "dev");
     if (hv) place(hv, hv.n.name, hv.n.ip || "", true);
 
@@ -1112,7 +1251,8 @@ class NetzwerkKarte extends HTMLElement {
     ctx.fillStyle = "rgba(110,135,190,.9)";
     ctx.font = `400 11px ${FONT}`;
     ctx.textAlign = "left";
-    ctx.fillText("Rechte Maustaste: drehen · Mausrad: zoomen · Links auf Hintergrund: Ansicht verschieben · Links auf Knoten: Knoten verschieben", 16, Hc - 14);
+    const touch = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (!touch) ctx.fillText("Rechte Maustaste: drehen · Mausrad: zoomen · Links auf Hintergrund: Ansicht verschieben · Links auf Knoten: Knoten verschieben", 16, Hc - 14);
   }
 
   _pick(x, y) {
@@ -1259,6 +1399,344 @@ class NetzwerkKarte extends HTMLElement {
     }
   }
 
+  // ---------- Suche ----------
+  _terms() {
+    return this._q.toLowerCase().split(/\s+/).filter(Boolean);
+  }
+
+  _leaseFor(d) {
+    return this._leaseRows().find((r) => {
+      const f = leaseFields(r);
+      return (d.mac && f.mac === d.mac) || (d.ip && f.ip === d.ip);
+    });
+  }
+
+  // Alle durchsuchbaren Eigenschaften je Knoten: Name, IP, MAC, Router, Tracker-Attribute, Lease-Felder (z. B. Hersteller)
+  _haystacks(m) {
+    const low = (v) => String(v).toLowerCase();
+    const flat = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+    const hs = new Map();
+    m.hubs.forEach((h) => hs.set(`h:${h.id}`, low([h.name, h.ssid, h.ip, h.mac, h.entity, "router"].filter(Boolean).join(" "))));
+    m.devices.forEach((d) => {
+      const st = d.entity ? this._hass.states[d.entity] : null;
+      const a = (st && st.attributes) || {};
+      const lr = this._leaseFor(d);
+      const hub = m.hubs.find((x) => x.id === d.hub);
+      const parts = [
+        d.name, d.orig, d.key, d.ip, d.mac, d.entity, hub && hub.name, hub && hub.ssid, LABELS[d.connection] || d.connection,
+        st && st.state, d.lease ? "dhcp lease" : "", d.online ? "online" : "offline",
+        ...Object.values(a).map(flat), ...(lr ? Object.values(lr).map(flat) : []),
+      ];
+      const compact = [d.mac, a.mac, lr && lr.hwaddr].filter(Boolean).map((x) => low(x).replace(/[^0-9a-f]/g, "")).join(" ");
+      hs.set(`d:${d.key}`, `${low(parts.filter((x) => x !== "" && x != null).join(" "))} ${compact}`);
+    });
+    return hs;
+  }
+
+  _refreshHits() {
+    const terms = this._terms();
+    const prev = this._hits[this._hitIdx];
+    if (!terms.length || !this._m || !this._hass) this._hits = [];
+    else {
+      this._hits = [...this._haystacks(this._m).entries()].filter(([, txt]) => terms.every((t) => txt.includes(t))).map(([id]) => id);
+    }
+    this._hitSet = new Set(this._hits);
+    this._hitIdx = prev ? this._hits.indexOf(prev) : -1;
+  }
+
+  _setQuery(q) {
+    this._q = q;
+    this._hitIdx = -1;
+    this._refreshHits();
+    this._applySearch();
+  }
+
+  _applySearch() {
+    this._updateSearchUI();
+    if (this._is3d()) {
+      this._req3d();
+      this._startPulse();
+    } else this._applySearch2D();
+  }
+
+  _applySearch2D() {
+    const sc = this._root.querySelector(".scroll");
+    if (sc) sc.classList.toggle("searching", this._hitSet.size > 0);
+    const cur = this._hits[this._hitIdx];
+    Object.entries(this._els).forEach(([id, e]) => {
+      const h = this._hitSet.has(id);
+      if (e.node) {
+        e.node.classList.toggle("hit", h);
+        e.node.classList.toggle("cur", id === cur);
+      }
+      e.labs.forEach((l) => l.classList.toggle("hit", h));
+      e.b.forEach((l) => l.classList.toggle("hit", h));
+    });
+  }
+
+  _hitInfo(id) {
+    const m = this._m;
+    if (id.startsWith("h:")) {
+      const h = m.hubs.find((x) => `h:${x.id}` === id);
+      return h ? { name: h.name, sub: [h.ssid, h.ip].filter(Boolean).join("  ·  "), hub: "Router" } : null;
+    }
+    const d = m.devices.find((x) => `d:${x.key}` === id);
+    if (!d) return null;
+    const lr = this._leaseFor(d);
+    const st = d.entity ? this._hass.states[d.entity] : null;
+    const mfr = (lr && lr.mac_info) || (st && st.attributes && st.attributes.manufacturer) || "";
+    const hub = m.hubs.find((x) => x.id === d.hub);
+    return { name: d.name, sub: [d.ip, mfr].filter(Boolean).join("  ·  "), hub: hub ? hub.name.replace(/^FRITZ!Box /, "Box ") : "" };
+  }
+
+  _updateSearchUI() {
+    const box = this._root.querySelector(".searchbox");
+    const chip = this._root.querySelector(".shits");
+    const drop = this._root.querySelector(".sdrop");
+    if (!box || !chip || !drop) return;
+    const n = this._hits.length;
+    box.classList.toggle("has", !!this._q);
+    chip.hidden = !this._q;
+    chip.classList.toggle("none", !!this._q && n === 0);
+    chip.innerHTML = !this._q
+      ? ""
+      : n
+        ? `<span>${this._hitIdx >= 0 ? `${this._hitIdx + 1}/${n}` : n} Treffer</span><button data-search="prev" aria-label="Vorheriger Treffer">◀</button><button data-search="next" aria-label="Nächster Treffer">▶</button>`
+        : `<span>Keine Treffer</span>`;
+    const show = this._sfocus && n > 0;
+    drop.hidden = !show;
+    if (!show) return;
+    const cur = this._hits[this._hitIdx];
+    const items = this._hits.slice(0, 7).map((id) => {
+      const i = this._hitInfo(id);
+      return i
+        ? `<div class="sitem${id === cur ? " cur" : ""}" data-hit="${esc(id)}"><i></i><div><b>${esc(i.name)}</b><small>${esc(i.sub)}</small></div><em>${esc(i.hub)}</em></div>`
+        : "";
+    });
+    drop.innerHTML = items.join("") + (n > 7 ? `<div class="sfoot">+ ${n - 7} weitere Treffer · Eingabetaste: nächster Treffer</div>` : `<div class="sfoot">Eingabetaste: nächster Treffer</div>`);
+  }
+
+  _searchAct(act) {
+    if (act === "clear") {
+      const inp = this._root.querySelector(".sinput");
+      if (inp) {
+        inp.value = "";
+        inp.focus();
+      }
+      this._setQuery("");
+    } else if (act === "next") this._stepHit(1);
+    else if (act === "prev") this._stepHit(-1);
+  }
+
+  _stepHit(dir) {
+    const n = this._hits.length;
+    if (!n) return;
+    const i = this._hitIdx < 0 ? (dir > 0 ? 0 : n - 1) : (this._hitIdx + dir + n) % n;
+    this._goto(this._hits[i]);
+  }
+
+  // Zum Treffer springen: 3D dreht den Knoten nach vorn, 2D schwenkt und zoomt dorthin. Danach öffnet sich das Infofenster.
+  _goto(id) {
+    const i = this._hits.indexOf(id);
+    if (i < 0) return;
+    this._hitIdx = i;
+    this._updateSearchUI();
+    this._closeMenu(true);
+    const done = () => this._openHit(id);
+    if (this._is3d()) {
+      this._req3d();
+      this._jump3(id, done);
+    } else {
+      this._applySearch2D();
+      this._jump2(id, done);
+    }
+  }
+
+  _openHit(id) {
+    if (!id.startsWith("d:") || this._hits[this._hitIdx] !== id) return;
+    const key = id.slice(2);
+    const d = this._m && this._m.devices.find((x) => x.key === key);
+    const el = this._devEl(key) || this._anchor3d(this._scr.find((q) => q.id === id));
+    if (d && el) this._openInfo(d, el);
+  }
+
+  _tween(ms, step, done) {
+    if (this._tw) this._tw.stop = true;
+    const tw = { stop: false };
+    this._tw = tw;
+    const t0 = Date.now();
+    const reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const tick = () => {
+      if (tw.stop) return;
+      const t = reduce ? 1 : clamp((Date.now() - t0) / ms, 0, 1);
+      step(t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+      if (t < 1) requestAnimationFrame(tick);
+      else {
+        this._tw = null;
+        if (done) done();
+      }
+    };
+    requestAnimationFrame(tick);
+  }
+
+  _jump2(id, done) {
+    const c = this._cur[id];
+    if (!c) return;
+    const vb = this._vb;
+    const v0 = { ...this._view };
+    const k1 = Math.max(v0.k, 1.6);
+    const x1 = vb.x + vb.w / 2 - k1 * c.x;
+    const y1 = vb.y + vb.h / 2 - k1 * c.y;
+    this._tween(600, (e) => {
+      this._view = { k: v0.k + (k1 - v0.k) * e, x: v0.x + (x1 - v0.x) * e, y: v0.y + (y1 - v0.y) * e };
+      this._applyView();
+    }, done);
+  }
+
+  _jump3(id, done) {
+    const n = this._scene && this._scene.nodes.find((q) => q.id === id);
+    if (!n || !this._cv) return;
+    const cam = this._cam;
+    const c0 = { ...cam };
+    const p = n.p;
+    const yawT = (Math.atan2(-p[0], p[2]) * 180) / Math.PI; // Knoten nach vorn
+    const yaw1 = c0.yaw + ((((yawT - c0.yaw) % 360) + 540) % 360) - 180;
+    const pitch1 = clamp(c0.pitch, 10, 30);
+    const k1 = Math.max(c0.k, 1.5);
+    const box = this._cv.parentElement.getBoundingClientRect();
+    const Wc = Math.max(320, box.width || 1000);
+    const Hc = Math.max(240, box.height || 560);
+    const q = this._projFor({ yaw: yaw1, pitch: pitch1, k: k1, px: 0, py: 0 }, Wc, Hc)(p);
+    const px1 = Wc / 2 - q.x;
+    const py1 = Hc / 2 - q.y;
+    this._tween(700, (e) => {
+      cam.yaw = c0.yaw + (yaw1 - c0.yaw) * e;
+      cam.pitch = c0.pitch + (pitch1 - c0.pitch) * e;
+      cam.k = c0.k + (k1 - c0.k) * e;
+      cam.px = c0.px + (px1 - c0.px) * e;
+      cam.py = c0.py + (py1 - c0.py) * e;
+      this._render3d();
+    }, done);
+  }
+
+  _projFor(cam, Wc, Hc) {
+    const dist = this._scene.R * 2.6;
+    const focal = 1.14 * Wc * cam.k;
+    const ca = Math.cos((cam.yaw * Math.PI) / 180);
+    const sa = Math.sin((cam.yaw * Math.PI) / 180);
+    const cp = Math.cos((cam.pitch * Math.PI) / 180);
+    const sp = Math.sin((cam.pitch * Math.PI) / 180);
+    return (p) => {
+      const x1 = ca * p[0] + sa * p[2];
+      const z1 = -sa * p[0] + ca * p[2];
+      const y2 = cp * p[1] - sp * z1;
+      const z2 = sp * p[1] + cp * z1;
+      const s = focal / (dist - z2);
+      return { x: Wc / 2 + cam.px + x1 * s, y: Hc / 2 + cam.py - y2 * s, z: z2, s };
+    };
+  }
+
+  // Pulsieren der Treffer in 3D: nur solange es Treffer gibt
+  _startPulse() {
+    if (this._pulsing || !this._hitSet.size) return;
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    this._pulsing = true;
+    const tick = () => {
+      if (!this._pulsing) return;
+      if (!this.isConnected || !this._is3d() || !this._hitSet.size) {
+        this._pulsing = false;
+        return;
+      }
+      this._render3d();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // ---------- Touch: ein Finger dreht (3D) oder verschiebt (2D), zwei Finger zoomen ----------
+  _tdown(e) {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const area = t.closest(".stage3d") ? "3d" : t.closest(".scroll") ? "2d" : "";
+    if (!area || t.closest(".zoom") || t.closest(".menu")) return;
+    if (!this._tp.size) {
+      this._tarea = area;
+      this._tmoved = false;
+    } else if (area !== this._tarea) return;
+    this._tp.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this._tbase();
+  }
+
+  _tbase() {
+    const pts = [...this._tp.values()];
+    const g = { n: pts.length, cam0: { ...this._cam }, view0: { ...this._view }, p0: pts.map((q) => ({ ...q })) };
+    if (pts.length >= 2) {
+      g.d0 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      g.m0 = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    }
+    this._tg = g;
+  }
+
+  _tmove(e) {
+    if (!this._tp.has(e.pointerId) || !this._tg) return;
+    this._tp.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = this._tg;
+    const pts = [...this._tp.values()];
+    const is3 = this._tarea === "3d";
+    const svg = is3 ? null : this._root.querySelector(".scroll svg");
+    const rect = svg ? svg.getBoundingClientRect() : null;
+    const vb = this._vb;
+    if (pts.length === 1) {
+      const dx = pts[0].x - g.p0[0].x;
+      const dy = pts[0].y - g.p0[0].y;
+      if (!this._tmoved && Math.hypot(dx, dy) < 8) return;
+      this._tmoved = true;
+      if (is3) {
+        this._cam.yaw = g.cam0.yaw + dx * 0.4;
+        this._cam.pitch = clamp(g.cam0.pitch + dy * 0.4, -88, 88);
+        this._req3d();
+      } else if (rect) {
+        this._view = { k: g.view0.k, x: g.view0.x + (dx * vb.w) / rect.width, y: g.view0.y + (dy * vb.h) / rect.height };
+        this._applyView();
+      }
+    } else if (g.d0) {
+      this._tmoved = true;
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      const ratio = d / g.d0;
+      const m1 = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      if (is3) {
+        this._cam.k = clamp(g.cam0.k * ratio, 0.35, 5);
+        this._cam.px = g.cam0.px + (m1.x - g.m0.x);
+        this._cam.py = g.cam0.py + (m1.y - g.m0.y);
+        this._req3d();
+      } else if (rect) {
+        const toU = (q) => ({ x: vb.x + ((q.x - rect.left) * vb.w) / rect.width, y: vb.y + ((q.y - rect.top) * vb.h) / rect.height });
+        const u0 = toU(g.m0);
+        const u1 = toU(m1);
+        const k = clamp(g.view0.k * ratio, 0.4, 6);
+        const f = k / g.view0.k;
+        this._view = { k, x: u1.x - (u0.x - g.view0.x) * f, y: u1.y - (u0.y - g.view0.y) * f };
+        this._applyView();
+      }
+    }
+  }
+
+  _tup(e) {
+    if (!this._tp.has(e.pointerId)) return;
+    this._tp.delete(e.pointerId);
+    if (this._tp.size) {
+      this._tbase();
+      return;
+    }
+    this._tg = null;
+    if (this._tmoved) {
+      this._suppress = true;
+      setTimeout(() => (this._suppress = false), 0);
+    }
+    this._tmoved = false;
+    this._tarea = "";
+  }
+
   _applyView() {
     const g = this._root.querySelector("#vp");
     const v = this._view;
@@ -1302,6 +1780,7 @@ class NetzwerkKarte extends HTMLElement {
     }
     this._key = key;
     this._m = model;
+    this._refreshHits();
     this._draw(model);
   }
 
@@ -1762,6 +2241,7 @@ class NetzwerkKarte extends HTMLElement {
       <g class="node ${online ? "" : "off"} ${extra}" style="--c:${color}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})" ${nid ? `data-node="${esc(nid)}"` : ""}
          ${hubId ? `data-hub="${esc(hubId)}" tabindex="0" role="button"` : devKey ? `data-dev="${esc(devKey)}" ${entity ? `data-entity="${esc(entity)}"` : ""} tabindex="0" role="button"` : entity ? `data-entity="${esc(entity)}" tabindex="0" role="button"` : ""}>
         <circle class="ring" r="${r}" fill="#0c1530" stroke="${color}" stroke-width="2"/>
+        <circle class="pulse" r="${r}"/><circle class="pulse p2" r="${r}"/>
         <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}"><div xmlns="http://www.w3.org/1999/xhtml"><ha-icon icon="${esc(icon)}"></ha-icon></div></foreignObject>
       </g>`;
 
@@ -1836,12 +2316,14 @@ class NetzwerkKarte extends HTMLElement {
               c.drag_nodes === false ? "" : `<button data-zoom="layout" title="Gespeicherte Positionen dieser Ansicht zurücksetzen">▦</button>`
             }`
           }</div>`;
+    const searchHtml = `<div class="searchbox${this._q ? " has" : ""}"><svg class="sicon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 15l6 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><input class="sinput" type="text" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Suchen: Name, IP, MAC, Hersteller …" aria-label="Suche" value="${esc(this._q)}"><button class="sclear" data-search="clear" aria-label="Suche löschen" title="Löschen">×</button><div class="sdrop" hidden></div></div><div class="shits" hidden></div>`;
     this._root.innerHTML = `<style>${STYLE}</style>
       <ha-card>
         <header>
           <div class="brand"><div class="logo"><ha-icon icon="mdi:lan"></ha-icon></div>
             <div><h1>${esc(c.title)}</h1><div class="sub">${esc(c.subtitle)}</div></div></div>
           <div class="mode" role="group" aria-label="Ansicht"><button data-mode="2d" class="${is3d ? "" : "on"}">2D</button><button data-mode="3d" class="${is3d ? "on" : ""}">3D</button></div>
+          ${searchHtml}
           <span class="chip" style="--c:${chip}"><i></i>${m.internet.online ? "Internet online" : "Internet offline"}</span>
         </header>
         ${tiles ? `<div class="stats">${tiles}</div>` : ""}
@@ -1852,6 +2334,18 @@ class NetzwerkKarte extends HTMLElement {
     else {
       this._indexEls();
       this._applyView();
+    }
+    this._applySearch();
+    if (this._sfocus) {
+      const inp = this._root.querySelector(".sinput");
+      if (inp) {
+        inp.focus();
+        try {
+          inp.setSelectionRange(this._scaret, this._scaret);
+        } catch (err) {
+          /* ignorieren */
+        }
+      }
     }
   }
 }

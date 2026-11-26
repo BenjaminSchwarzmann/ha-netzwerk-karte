@@ -108,6 +108,22 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 - Die Karte liest die Felder `address`, `hwaddr`, `hostname`, `state` und `if_descr`/`if_name` der Kea-Antwort. Stehen sie in deinem Sensor anders, nenne sie mir oder passe `leaseFields` in der JavaScript-Datei an.
 - Nur DHCPv4 über Kea ist vorgesehen.
 
+## Suche
+
+Das Suchfeld in der Kopfzeile durchsucht **alle Eigenschaften** der Knoten: Name, ursprünglichen Namen, IP, MAC (auch ohne Doppelpunkte), Router und WLAN-Name, Verbindungsart, Entität, alle Attribute des Trackers und alle Felder der DHCP-Lease, darunter den Hersteller (`mac_info`). Mehrere Wörter müssen alle vorkommen, Groß- und Kleinschreibung spielt keine Rolle.
+
+- **Treffer:** Alle passenden Knoten pulsieren **gelb**, der Rest tritt zurück. Die Verbindungen zu Treffern leuchten ebenfalls gelb. Der Zähler zeigt die Anzahl.
+- **Zu einem Treffer springen:** Eingabetaste (rückwärts mit Umschalt), die Pfeile ◀ ▶ im Zähler oder ein Klick auf einen Eintrag der Trefferliste. In **3D** dreht sich die Ansicht so, dass der Knoten vorne steht, und zentriert ihn. In **2D** schwenkt und zoomt die Karte zu ihm. Danach öffnet sich das Infofenster, in dem die Zeile mit dem Treffer gelb markiert ist.
+- **Leeren:** Mit dem × im Feld oder Esc.
+- Bei *Verringerte Bewegung* im Betriebssystem pulsieren die Treffer nicht, sie leuchten nur.
+
+## Bedienung am Handy
+
+- **3D:** Mit **einem Finger** wischen dreht und neigt die Grafik. Mit **zwei Fingern** zoomen (spreizen oder zusammenziehen) und verschieben. Antippen eines Knotens öffnet sein Infofenster.
+- **2D:** Ein Finger verschiebt die Ansicht, zwei Finger zoomen.
+- Hinweistexte zur Bedienung werden auf dem Handy nicht eingeblendet. Der Bereich der Grafik fängt Wischbewegungen ab. Zum Scrollen der Seite wischst du außerhalb der Grafik, zum Beispiel auf der Kopfzeile.
+- Knoten lassen sich per Touch nicht verschieben, das geht mit der Maus.
+
 ## 3D-Ansicht
 
 Mit dem Umschalter **2D | 3D** neben dem Titel wechselst du zwischen der flachen Darstellung und einer räumlichen Ansicht. Die Wahl wird pro Benutzer gespeichert. Mit `view: 3d` startet die Karte standardmäßig räumlich.
@@ -185,13 +201,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.4.0"
+git commit -m "Netzwerk-Karte 0.4.1"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.0`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.1`), damit Updates erkannt werden.
 
 ## Lizenz
 
