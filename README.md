@@ -113,7 +113,7 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 Das Suchfeld in der Kopfzeile durchsucht **alle Eigenschaften** der Knoten: Name, ursprünglichen Namen, IP, MAC (auch ohne Doppelpunkte), Router und WLAN-Name, Verbindungsart, Entität, alle Attribute des Trackers und alle Felder der DHCP-Lease, darunter den Hersteller (`mac_info`). Mehrere Wörter müssen alle vorkommen, Groß- und Kleinschreibung spielt keine Rolle.
 
 - **Treffer:** Alle passenden Knoten pulsieren **gelb**, der Rest tritt zurück. Die Verbindungen zu Treffern leuchten ebenfalls gelb. Der Zähler zeigt die Anzahl.
-- **Zu einem Treffer springen:** Eingabetaste (rückwärts mit Umschalt), die Pfeile ◀ ▶ im Zähler oder ein Klick auf einen Eintrag der Trefferliste. In **3D** dreht sich die Ansicht so, dass der Knoten vorne steht, und zentriert ihn. In **2D** schwenkt und zoomt die Karte zu ihm. Danach öffnet sich das Infofenster, in dem die Zeile mit dem Treffer gelb markiert ist.
+- **Zu einem Treffer springen:** Eingabetaste (rückwärts mit Umschalt), die Pfeile ◀ ▶ im Zähler oder ein Klick auf einen Eintrag der Trefferliste. In **3D** dreht sich die Ansicht so, dass der Knoten vorne steht, und zentriert ihn. In **2D** schwenkt und zoomt die Karte zu ihm. Das Infofenster öffnet sich erst, wenn du den Knoten antippst oder anklickst. Dort ist die Zeile mit dem Treffer gelb markiert.
 - **Leeren:** Mit dem × im Feld oder Esc.
 - Bei *Verringerte Bewegung* im Betriebssystem pulsieren die Treffer nicht, sie leuchten nur.
 
@@ -201,13 +201,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.4.1"
+git commit -m "Netzwerk-Karte 0.4.2"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.1`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.2`), damit Updates erkannt werden.
 
 ## Lizenz
 

@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.4.1 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.4.1";
+/*! netzwerk-karte 0.4.2 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.4.2";
 const NAMES_KEY = "netzwerk-karte-namen";
 const POS_KEY = "netzwerk-karte-positionen";
 const OPT_KEY = "netzwerk-karte-optionen";
@@ -145,7 +145,8 @@ const STYLE = `
   .menu td { padding: 3px 10px; vertical-align: top; word-break: break-word; }
   .menu td:first-child { color: #8ea3d4; white-space: nowrap; padding-right: 4px; }
   .menu .sep td { padding-top: 10px; font-size: 10px; letter-spacing: .1em; color: #6f84b8; }
-  svg { display: block; width: 100%; min-width: 680px; height: auto; }
+  .scroll svg { display: block; width: 100%; min-width: 680px; height: auto; }
+  .searchbox .sicon { width: 18px; height: 18px; min-width: 0; flex: none; }
   .node { cursor: pointer; outline: none; }
   .node circle.ring { filter: drop-shadow(0 0 6px var(--c)); transition: transform .15s; transform-box: fill-box; transform-origin: center; }
   .node:hover circle.ring, .node:focus-visible circle.ring { transform: scale(1.12); }
@@ -198,7 +199,7 @@ const STYLE = `
   line.hit { stroke: ${COLORS.hit}; opacity: .95; }
   @keyframes pulse { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(2.8); } }
   .menu tr.hl td { background: rgba(255,214,10,.15); color: #ffe27a; }
-  @media (pointer: coarse) { .scroll { touch-action: none; } svg { min-width: 0; } }
+  @media (pointer: coarse) { .scroll { touch-action: none; } .scroll svg { min-width: 0; } }
   @media (max-width: 640px) {
     .searchbox { order: 5; flex: 1 1 100%; max-width: none; }
     .shits { order: 6; }
@@ -1535,29 +1536,20 @@ class NetzwerkKarte extends HTMLElement {
     this._goto(this._hits[i]);
   }
 
-  // Zum Treffer springen: 3D dreht den Knoten nach vorn, 2D schwenkt und zoomt dorthin. Danach öffnet sich das Infofenster.
+  // Zum Treffer springen: 3D dreht den Knoten nach vorn, 2D schwenkt und zoomt dorthin. Das Infofenster öffnet sich erst beim Antippen des Knotens.
   _goto(id) {
     const i = this._hits.indexOf(id);
     if (i < 0) return;
     this._hitIdx = i;
     this._updateSearchUI();
     this._closeMenu(true);
-    const done = () => this._openHit(id);
     if (this._is3d()) {
       this._req3d();
-      this._jump3(id, done);
+      this._jump3(id);
     } else {
       this._applySearch2D();
-      this._jump2(id, done);
+      this._jump2(id);
     }
-  }
-
-  _openHit(id) {
-    if (!id.startsWith("d:") || this._hits[this._hitIdx] !== id) return;
-    const key = id.slice(2);
-    const d = this._m && this._m.devices.find((x) => x.key === key);
-    const el = this._devEl(key) || this._anchor3d(this._scr.find((q) => q.id === id));
-    if (d && el) this._openInfo(d, el);
   }
 
   _tween(ms, step, done) {
