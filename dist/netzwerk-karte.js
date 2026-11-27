@@ -1,5 +1,5 @@
-/*! netzwerk-karte 0.4.2 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
-const VERSION = "0.4.2";
+/*! netzwerk-karte 0.4.3 – Netzwerk-Topologie für Home Assistant (FRITZ!Box Tools, Mesh, eigene Geräte) */
+const VERSION = "0.4.3";
 const NAMES_KEY = "netzwerk-karte-namen";
 const POS_KEY = "netzwerk-karte-positionen";
 const OPT_KEY = "netzwerk-karte-optionen";

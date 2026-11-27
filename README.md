@@ -2,6 +2,8 @@
 
 Lovelace-Karte, die dein Netzwerk als animierte Topologie zeigt: Firewall oder Router in der Mitte, daran Fritzboxen, Repeater oder Switches als eigene Knoten, darum herum die Geräte, automatisch nach IP-Subnetz zugeordnet. Verbindungen sind nach Art eingefärbt (WLAN, LAN, Mesh, Internet), Offline-Geräte werden ausgegraut, oben stehen frei wählbare Kennzahlen. Ein Klick auf einen Knoten öffnet den Entitätsdialog.
 
+![3D-Ansicht der Netzwerk-Karte](https://raw.githubusercontent.com/BenjaminSchwarzmann/ha-netzwerk-karte/main/docs/3d-ansicht.png)
+
 Die Karte besteht aus einer einzigen JavaScript-Datei ohne Build-Schritt.
 
 ## So kommen die Daten zustande
@@ -110,6 +112,8 @@ Damit Leases einem Router zugeordnet werden, genügt das `subnet` des Hubs. Alte
 
 ## Suche
 
+![Suche nach einem Begriff: Treffer pulsieren gelb, die Ansicht dreht den Knoten nach vorn](https://raw.githubusercontent.com/BenjaminSchwarzmann/ha-netzwerk-karte/main/docs/suche-treffer.png)
+
 Das Suchfeld in der Kopfzeile durchsucht **alle Eigenschaften** der Knoten: Name, ursprünglichen Namen, IP, MAC (auch ohne Doppelpunkte), Router und WLAN-Name, Verbindungsart, Entität, alle Attribute des Trackers und alle Felder der DHCP-Lease, darunter den Hersteller (`mac_info`). Mehrere Wörter müssen alle vorkommen, Groß- und Kleinschreibung spielt keine Rolle.
 
 - **Treffer:** Alle passenden Knoten pulsieren **gelb**, der Rest tritt zurück. Die Verbindungen zu Treffern leuchten ebenfalls gelb. Der Zähler zeigt die Anzahl.
@@ -201,13 +205,13 @@ Die Entity-IDs der FRITZ!Box-Sensoren unterscheiden sich je nach Modell und Spra
 cd ha-netzwerk-karte
 git init
 git add .
-git commit -m "Netzwerk-Karte 0.4.2"
+git commit -m "Netzwerk-Karte 0.4.3"
 git branch -M main
 git remote add origin https://github.com/DEIN-NAME/ha-netzwerk-karte.git
 git push -u origin main
 ```
 
-Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.2`), damit Updates erkannt werden.
+Für HACS lohnt sich zusätzlich ein Release (Tag `v0.4.3`), damit Updates erkannt werden.
 
 ## Lizenz
 

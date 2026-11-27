@@ -1,5 +1,8 @@
 # Änderungen
 
+## 0.4.3
+- Nur Dokumentation und Repository: Bilder in der README, überarbeiteter Workflow für die HACS-Prüfung. Die Karte selbst ist unverändert gegenüber 0.4.2.
+
 ## 0.4.2
 - Die Lupe im Suchfeld hatte die Größe der Netzwerk-Grafik und überdeckte die Anzeige. Sie ist jetzt klein im Suchfeld.
 - Nach dem Sprung zu einem Suchtreffer öffnet sich das Infofenster nicht mehr von selbst. Es erscheint erst beim Antippen oder Anklicken des Knotens (gilt für Handy und Maus).
